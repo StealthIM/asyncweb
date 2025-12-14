@@ -2,24 +2,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libcoro.h"
-#include "../private/http.h"
+#include "asyncweb.h"
 
-task_t* task(http_test_task) {
+task_t* task(sync_http_test_task) {
     gen_dec_vars(
-        async_http_response_t response;
-        task_t *task;
-        void *result;
+        sync_http_response_t response;
+        int result;
     );
     gen_begin(ctx);
     
-    printf("Testing async HTTP GET request\n");
+    printf("Testing sync HTTP GET request\n");
     
-    // 调用异步HTTP API
-    gen_var(task) = async_http_get("http://postman-echo.com/get", &gen_var(response));
-    gen_yield(gen_var(task));
-    
-    gen_var(result) = future_result(gen_var(task));
-    if (gen_var(result) == NULL || (intptr_t)gen_var(result) != 0) {
+    // 调用同步HTTP API
+    gen_var(result) = sync_http_get("http://postman-echo.com/get", &gen_var(response));
+    if (gen_var(result) != 0) {
         printf("HTTP GET request failed\n");
         gen_return(1);
     }
@@ -29,15 +25,16 @@ task_t* task(http_test_task) {
     printf("Body:\n%s\n", gen_var(response).body);
     
     // 释放资源
-    async_http_response_free(&gen_var(response));
+    sync_http_response_free(&gen_var(response));
     
-    printf("HTTP test completed successfully\n");
+    printf("Sync HTTP test completed successfully\n");
+    loop_stop();
     gen_return(0);
     
     gen_end(NULL);
 }
 
-int test_http() {
+int test_sync_http() {
     // 初始化网络库
     if (anet_init() != ANET_OK) {
         printf("Network initialization failed\n");
@@ -45,7 +42,7 @@ int test_http() {
     }
     
     // 创建并运行主任务
-    task_t* maintask = http_test_task();
+    task_t* maintask = sync_http_test_task();
     loop_run(maintask);
     
     // 清理

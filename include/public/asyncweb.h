@@ -1,3 +1,5 @@
 #pragma once
-#include "../private/sync/network.h"
-#include "../private/sync/websocket.h"
+#include "../private/http.h"
+#include "../private/common.h"
+#include "../private/sock/future_socket.h"
+#include "../private/sock/stream.h"

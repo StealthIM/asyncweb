@@ -41,29 +41,22 @@ endif()
 add_library(asyncweb)
 
 list(APPEND SRC_FILES
-        src/sync/network/common.c
+        src/common.c
         src/tools.c
+        src/http.c
+        src/sock/future_socket.c
+        src/sock/stream.c
 )
 
 if(ASYNCWEB_OS_BACKEND STREQUAL "posix")
     list(APPEND SRC_FILES
-            src/sync/network/posix.c
+            src/sock/pal_socket/posix.c
     )
-    if(ASYNCWEB_WS STREQUAL "on")
-        list(APPEND SRC_FILES
-                src/sync/websocket/posix.c
-        )
-    endif()
 elseif(ASYNCWEB_OS_BACKEND STREQUAL "win")
     list(APPEND SRC_FILES
-            src/sync/network/win32.c
+            src/sock/pal_socket/win.c
     )
     target_link_libraries(asyncweb PRIVATE ws2_32 crypt32)
-    if(ASYNCWEB_WS STREQUAL "on")
-        list(APPEND SRC_FILES
-                src/sync/websocket/win32.c
-        )
-    endif()
 else()
     message(FATAL_ERROR "No valid OS backend selected.")
 endif()
@@ -97,8 +90,10 @@ if(ASYNCWEB_STANDALONE)
     enable_testing()
     add_executable(test_asyncweb
             tests/main.c
-            tests/test_http.c
+            tests/test_sync_http.c
+            tests/test_async_http.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
-    add_test(NAME test_http COMMAND test_asyncweb http)
+    add_test(NAME test_sync_http COMMAND test_asyncweb sync_http)
+    add_test(NAME test_async_http COMMAND test_asyncweb async_http)
 endif()
