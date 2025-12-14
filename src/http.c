@@ -2,6 +2,9 @@
 #include <string.h>
 #include <stdio.h>
 #include "http.h"
+
+#include <openssl/ssl.h>
+
 #include "tls.h"
 #include "sock/pal_socket.h"
 #include "libcoro.h"
@@ -184,7 +187,7 @@ static int parse_response(const char *response_data, size_t response_len, void *
     status_text_start++;
     
     if (is_async) {
-        async_http_response_t *response = (async_http_response_t*)response_ptr;
+        anet_async_http_response_t *response = (anet_async_http_response_t*)response_ptr;
         response->status_code = atoi(status_code_start);
         response->status_text = strdup(status_text_start);
         
@@ -216,7 +219,7 @@ static int parse_response(const char *response_data, size_t response_len, void *
             response->body = NULL;
         }
     } else {
-        sync_http_response_t *response = (sync_http_response_t*)response_ptr;
+        anet_sync_http_response_t *response = (anet_sync_http_response_t*)response_ptr;
         response->status_code = atoi(status_code_start);
         response->status_text = strdup(status_text_start);
         
@@ -257,14 +260,14 @@ static int parse_response(const char *response_data, size_t response_len, void *
  * ============================================================ */
 
 // 发送 HTTP 请求
-int sync_http_request(const char *method,
+anet_status_t anet_sync_http_request(const char *method,
                      const char *host,
                      uint16_t port,
                      const char *path,
                      const char **headers,
                      const char *body,
-                     sync_http_response_t *response) {
-    if (!method || !host || !path || !response) return -1;
+                     anet_sync_http_response_t *response) {
+    if (!method || !host || !path || !response) return ANET_ERR;
     
     // 初始化响应结构
     memset(response, 0, sizeof(*response));
@@ -276,7 +279,7 @@ int sync_http_request(const char *method,
     anet_palsock_t sock = anet_palsock_create(AF_INET, SOCK_STREAM, 0, 0);
     if (!anet_palsock_is_valid(sock)) {
         anet_palsock_cleanup();
-        return -1;
+        return ANET_ERR;
     }
     
     // 解析地址
@@ -285,7 +288,7 @@ int sync_http_request(const char *method,
     if (anet_palsock_resolve(host, &addr, &addr_len) != 0) {
         anet_palsock_close(sock);
         anet_palsock_cleanup();
-        return -1;
+        return ANET_ERR;
     }
     
     // 设置端口
@@ -299,7 +302,7 @@ int sync_http_request(const char *method,
     if (anet_palsock_connect(sock, (struct sockaddr*)&addr, addr_len) != 0) {
         anet_palsock_close(sock);
         anet_palsock_cleanup();
-        return -1;
+        return ANET_ERR;
     }
     
     // 创建stream
@@ -312,7 +315,7 @@ int sync_http_request(const char *method,
         if (!ssl) {
             anet_palsock_close(sock);
             anet_palsock_cleanup();
-            return -1;
+            return ANET_ERR;
         }
         
         sync_ssl_attach_socket(ssl, sock);
@@ -322,7 +325,7 @@ int sync_http_request(const char *method,
             sync_ssl_destroy(ssl);
             anet_palsock_close(sock);
             anet_palsock_cleanup();
-            return -1;
+            return ANET_ERR;
         }
         
         stream = sync_stream_from_ssl(ssl);
@@ -336,7 +339,7 @@ int sync_http_request(const char *method,
         }
         anet_palsock_close(sock);
         anet_palsock_cleanup();
-        return -1;
+        return ANET_ERR;
     }
     
     // 创建请求
@@ -344,7 +347,7 @@ int sync_http_request(const char *method,
     if (!request) {
         sync_stream_destroy(stream);
         anet_palsock_cleanup();
-        return -1;
+        return ANET_ERR;
     }
     
     // 发送请求
@@ -352,7 +355,7 @@ int sync_http_request(const char *method,
         free(request);
         sync_stream_destroy(stream);
         anet_palsock_cleanup();
-        return -1;
+        return ANET_ERR;
     }
     free(request);
     
@@ -378,7 +381,7 @@ int sync_http_request(const char *method,
                 free(response_data);
                 sync_stream_destroy(stream);
                 anet_palsock_cleanup();
-                return -1;
+                return ANET_ERR;
             }
             
             response_data = new_data;
@@ -411,11 +414,11 @@ int sync_http_request(const char *method,
     sync_stream_destroy(stream);
     anet_palsock_cleanup();
     
-    return result;
+    return (result == 0) ? ANET_OK : ANET_ERR;
 }
 
 // 释放 HTTP 响应资源
-void sync_http_response_free(sync_http_response_t *response) {
+void anet_sync_http_response_free(anet_sync_http_response_t *response) {
     if (!response) return;
     
     free(response->status_text);
@@ -425,18 +428,18 @@ void sync_http_response_free(sync_http_response_t *response) {
 }
 
 // 简化的 GET 请求
-int sync_http_get(const char *url, sync_http_response_t *response) {
+anet_status_t anet_sync_http_get(const char *url, anet_sync_http_response_t *response) {
     parsed_url_t parsed;
-    if (parse_url(url, &parsed) != 0) return -1;
+    if (parse_url(url, &parsed) != 0) return ANET_ERR;
     
     const char *headers[] = { "User-Agent: asyncweb/0.1", "Accept: */*", NULL };
-    return sync_http_request("GET", parsed.host, parsed.port, parsed.path, headers, NULL, response);
+    return anet_sync_http_request("GET", parsed.host, parsed.port, parsed.path, headers, NULL, response);
 }
 
 // 简化的 POST 请求
-int sync_http_post(const char *url, const char *content_type, const char *body, sync_http_response_t *response) {
+anet_status_t anet_sync_http_post(const char *url, const char *content_type, const char *body, anet_sync_http_response_t *response) {
     parsed_url_t parsed;
-    if (parse_url(url, &parsed) != 0) return -1;
+    if (parse_url(url, &parsed) != 0) return ANET_ERR;
     
     const char *headers[4] = { "User-Agent: asyncweb/0.1", NULL, NULL, NULL };
     
@@ -446,7 +449,7 @@ int sync_http_post(const char *url, const char *content_type, const char *body, 
         headers[1] = ct_header;
     }
     
-    return sync_http_request("POST", parsed.host, parsed.port, parsed.path, headers, body, response);
+    return anet_sync_http_request("POST", parsed.host, parsed.port, parsed.path, headers, body, response);
 }
 
 /* ============================================================
@@ -461,7 +464,7 @@ typedef struct {
     const char *path;
     const char **headers;
     const char *body;
-    async_http_response_t *response;
+    anet_async_http_response_t *response;
     
     // 内部状态
     parsed_url_t parsed;
@@ -476,7 +479,7 @@ typedef struct {
 } async_http_internal_t;
 
 // 异步HTTP请求协程
-task_t* task_arg(async_http_request_) {
+task_t* task_arg(anet_async_http_request_) {
     gen_dec_vars(
         async_http_internal_t *req;
         future_t *fut;
@@ -487,12 +490,12 @@ task_t* task_arg(async_http_request_) {
     gen_begin(ctx);
 
     {
-        async_http_request_t *in = (async_http_request_t*)arg;
+        anet_async_http_request_t *in = (anet_async_http_request_t*)arg;
         
         // 创建内部请求结构
         gen_var(req) = calloc(1, sizeof(*gen_var(req)));
         if (!gen_var(req)) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
         
         // 复制参数
@@ -513,14 +516,14 @@ task_t* task_arg(async_http_request_) {
     // 步骤1: 创建socket
     gen_var(req)->sock = anet_palsock_create(AF_INET, SOCK_STREAM, 0, 1);
     if (!anet_palsock_is_valid(gen_var(req)->sock)) {
-        gen_return((void*)(intptr_t)-1);
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 步骤2: 解析地址
     struct sockaddr_storage addr;
     int addr_len;
     if (anet_palsock_resolve(gen_var(req)->host, &addr, &addr_len) != 0) {
-        gen_return((void*)(intptr_t)-1);
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 设置端口
@@ -533,24 +536,23 @@ task_t* task_arg(async_http_request_) {
     // 创建异步socket
     gen_var(req)->async_sock = async_socket_create(gen_var(req)->sock);
     if (!gen_var(req)->async_sock) {
-        gen_return((void*)(intptr_t)-1);
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 步骤3: 连接
     gen_var(fut) = async_socket_connect(gen_var(req)->async_sock, (struct sockaddr*)&addr, addr_len);
     gen_yield(gen_var(fut));
     if (future_is_rejected(gen_var(fut))) {
-        gen_return((void*)(intptr_t)-1);
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 步骤4: 创建SSL（如果是HTTPS）
-    // TODO: fix
     int is_ssl = (gen_var(req)->port == 443);
 
     if (is_ssl) {
         gen_var(req)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(req)->host);
         if (!gen_var(req)->async_ssl) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
 
         async_ssl_attach_socket(gen_var(req)->async_ssl, gen_var(req)->async_sock);
@@ -560,18 +562,18 @@ task_t* task_arg(async_http_request_) {
         gen_yield_from_task(gen_var(task));
 
         if (future_result(gen_var(task)->future) != (void*)0) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
 
         gen_var(req)->stream = async_stream_from_ssl(gen_var(req)->async_ssl);
         if (!gen_var(req)->stream) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
 
     } else {
         gen_var(req)->stream = async_stream_from_socket(gen_var(req)->async_sock);
         if (!gen_var(req)->stream) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
     }
 
@@ -585,7 +587,7 @@ task_t* task_arg(async_http_request_) {
         gen_var(req)->body
     );
     if (!gen_var(req)->request) {
-        gen_return((void*)(intptr_t)-1);
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 步骤7: 发送请求
@@ -593,7 +595,7 @@ task_t* task_arg(async_http_request_) {
     gen_yield_from_task(gen_var(task));
 
     if (future_result(gen_var(task)->future) != (void*)0) {
-        gen_return((void*)(intptr_t)-1);
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     free(gen_var(req)->request);
@@ -611,9 +613,9 @@ task_t* task_arg(async_http_request_) {
                 int result = parse_response(gen_var(req)->response_data, gen_var(req)->total_read, gen_var(req)->response, 1);
                 free(gen_var(req)->response_data);
                 gen_var(req)->response_data = NULL;
-                gen_return((void*)(intptr_t)result);
+                gen_return((void*)(intptr_t)(result == 0 ? ANET_OK : ANET_ERR));
             }
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
         
         // 扩展响应缓冲区
@@ -626,7 +628,7 @@ task_t* task_arg(async_http_request_) {
             char *new_data = realloc(gen_var(req)->response_data, new_capacity);
             if (!new_data) {
                 free(gen_var(req)->response_data);
-                gen_return((void*)(intptr_t)-1);
+                gen_return((void*)(intptr_t)ANET_ERR);
             }
             
             gen_var(req)->response_data = new_data;
@@ -649,7 +651,7 @@ task_t* task_arg(async_http_request_) {
                     int result = parse_response(gen_var(req)->response_data, gen_var(req)->total_read, gen_var(req)->response, 1);
                     free(gen_var(req)->response_data);
                     gen_var(req)->response_data = NULL;
-                    gen_return((void*)(intptr_t)result);
+                    gen_return((void*)(intptr_t)(result == 0 ? ANET_OK : ANET_ERR));
                 }
             }
         }
@@ -660,12 +662,12 @@ task_t* task_arg(async_http_request_) {
 }
 
 // 简化的异步GET请求
-task_t* task_arg(async_http_get_) {
+task_t* task_arg(anet_async_http_get_) {
     gen_dec_vars(
         const char *url;
-        async_http_response_t *response;
+        anet_async_http_response_t *response;
         parsed_url_t parsed;
-        async_http_request_t req;
+        anet_async_http_request_t req;
         task_t *task;
     );
     gen_begin(ctx);
@@ -674,11 +676,11 @@ task_t* task_arg(async_http_get_) {
         // 解析参数
         void **args = (void**)arg;
         gen_var(url) = (const char*)args[0];
-        gen_var(response) = (async_http_response_t*)args[1];
+        gen_var(response) = (anet_async_http_response_t*)args[1];
         free(args);
         
         if (parse_url(gen_var(url), &gen_var(parsed)) != 0) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
         
         // 准备请求参数
@@ -691,32 +693,32 @@ task_t* task_arg(async_http_get_) {
         gen_var(req).body = NULL;
         gen_var(req).response = gen_var(response);
     }
-    gen_var(task) = async_http_request_(&gen_var(req));
+    gen_var(task) = anet_async_http_request_(&gen_var(req));
     gen_yield_from_task(gen_var(task));
 
     gen_end(future_result(gen_var(task)->future));
 }
 
-task_t* async_http_get(const char *url, async_http_response_t *response) {
+task_t* anet_async_http_get(const char *url, anet_async_http_response_t *response) {
     void **args = malloc(2 * sizeof(void*));
     if (!args) return NULL;
     
     args[0] = (void*)url;
     args[1] = response;
     
-    task_t *task = async_http_get_(args);
+    task_t *task = anet_async_http_get_(args);
     return task;
 }
 
 // 简化的异步POST请求
-task_t* task_arg(async_http_post_) {
+task_t* task_arg(anet_async_http_post_) {
     gen_dec_vars(
         const char *url;
         const char *content_type;
         const char *body;
-        async_http_response_t *response;
+        anet_async_http_response_t *response;
         parsed_url_t parsed;
-        async_http_request_t req;
+        anet_async_http_request_t req;
         char ct_header[256];
         const char *headers[4];
         task_t *task;
@@ -729,11 +731,11 @@ task_t* task_arg(async_http_post_) {
         gen_var(url) = (const char*)args[0];
         gen_var(content_type) = (const char*)args[1];
         gen_var(body) = (const char*)args[2];
-        gen_var(response) = (async_http_response_t*)args[3];
+        gen_var(response) = (anet_async_http_response_t*)args[3];
         free(args);
         
         if (parse_url(gen_var(url), &gen_var(parsed)) != 0) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return((void*)(intptr_t)ANET_ERR);
         }
         
         // 准备请求参数
@@ -756,13 +758,13 @@ task_t* task_arg(async_http_post_) {
         gen_var(req).response = gen_var(response);
     }
 
-    gen_var(task) = async_http_request_(&gen_var(req));
+    gen_var(task) = anet_async_http_request_(&gen_var(req));
     gen_yield_from_task(gen_var(task));
 
     gen_end(future_result(gen_var(task)->future));
 }
 
-task_t* async_http_post(const char *url, const char *content_type, const char *body, async_http_response_t *response) {
+task_t* anet_async_http_post(const char *url, const char *content_type, const char *body, anet_async_http_response_t *response) {
     void **args = malloc(4 * sizeof(void*));
     if (!args) return NULL;
     
@@ -771,12 +773,12 @@ task_t* async_http_post(const char *url, const char *content_type, const char *b
     args[2] = (void*)body;
     args[3] = response;
     
-    task_t *task = async_http_post_(args);
+    task_t *task = anet_async_http_post_(args);
     return task;
 }
 
 // 释放异步HTTP响应资源
-void async_http_response_free(async_http_response_t *response) {
+void anet_http_response_free(anet_async_http_response_t *response) {
     if (!response) return;
     
     free(response->status_text);

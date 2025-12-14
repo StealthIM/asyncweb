@@ -69,7 +69,13 @@ if(ASYNCWEB_SSL_BACKEND STREQUAL "openssl")
     list(APPEND SRC_FILES
             src/tls/openssl.c
     )
-    target_link_libraries(asyncweb PRIVATE ssl crypto)
+    find_package(OpenSSL CONFIG REQUIRED)
+
+    target_link_libraries(asyncweb
+            PUBLIC
+            OpenSSL::SSL
+            OpenSSL::Crypto
+    )
 else()
     message(FATAL_ERROR "No valid SSL backend selected.")
 endif()
@@ -87,6 +93,13 @@ target_include_directories(asyncweb
 target_link_libraries(asyncweb PUBLIC libcoro)
 
 if(ASYNCWEB_STANDALONE)
+    function(add_test_with_dir test_name executable arg)
+        add_test(NAME ${test_name} COMMAND ${executable} ${arg})
+        set_tests_properties(${test_name} PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+    endfunction()
+
     enable_testing()
     add_executable(test_asyncweb
             tests/main.c
@@ -94,6 +107,6 @@ if(ASYNCWEB_STANDALONE)
             tests/test_async_http.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
-    add_test(NAME test_sync_http COMMAND test_asyncweb sync_http)
-    add_test(NAME test_async_http COMMAND test_asyncweb async_http)
+    add_test_with_dir(test_sync_http test_asyncweb sync_http)
+    add_test_with_dir(test_async_http test_asyncweb async_http)
 endif()
