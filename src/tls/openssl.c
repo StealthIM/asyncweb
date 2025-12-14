@@ -6,6 +6,7 @@
 
 #include "tls.h"
 #include "sock/future_socket.h"
+#include "sock/stream.h"
 
 #define TLS_IO_BUF 16384
 
@@ -64,17 +65,76 @@ static future_t *future_done_value(void *data) {
 /* ------------------------------------------------------------
  * async BIO <-> socket glue
  * ------------------------------------------------------------ */
+task_t *task_arg(async_flush_wbio) {
+    gen_dec_vars(
+        async_ssl_t *ssl;
+        uint8_t buf[TLS_IO_BUF];
+        future_t *fut;
+        int off;
+    );
+    gen_begin(ctx)
 
-static future_t* async_flush_wbio(async_ssl_t *s, uint8_t *buf) {
-    int n = BIO_read(s->wbio, buf, TLS_IO_BUF);
-    if (n <= 0) {
-        return future_done_value((void*)0);
+    gen_var(ssl) = arg;
+
+    for (;;) {
+        int pending = BIO_pending(gen_var(ssl)->wbio);
+        if (pending <= 0) {
+            gen_return(0);
+        }
+
+        int n = BIO_read(gen_var(ssl)->wbio, gen_var(buf), sizeof(gen_var(buf)));
+        if (n < 0) {
+            gen_return(-1);
+        }
+        if (n == 0) {
+            gen_return(0);
+        }
+
+        gen_var(off) = 0;
+        while (gen_var(off) < n) {
+            gen_var(fut) = async_socket_send(
+                gen_var(ssl)->sock,
+                gen_var(buf) + gen_var(off), n - gen_var(off)
+            );
+            gen_yield(gen_var(fut));
+            int s = (int)future_result(gen_var(fut));
+            if (s <= 0) {
+                gen_return(-1);
+            }
+            gen_var(off) += s;
+        }
     }
-    return async_socket_send(s->sock, buf, (size_t)n);
+
+    gen_end(0);
 }
 
-static future_t* async_feed_rbio(async_ssl_t *s, uint8_t *buf) {
-    return async_socket_recv(s->sock, buf, TLS_IO_BUF);
+task_t* task_arg(async_feed_rbio) {
+    gen_dec_vars(
+        async_ssl_t *ssl;
+        uint8_t buf[TLS_IO_BUF];
+        future_t *fut;
+    );
+    gen_begin(ctx)
+
+    gen_var(ssl) = arg;
+
+    gen_var(fut) = async_socket_recv(
+        gen_var(ssl)->sock,
+        gen_var(buf), sizeof(gen_var(buf))
+    );
+    gen_yield(gen_var(fut));
+    int n = (int)future_result(gen_var(fut));
+
+    if (n > 0) {
+        gen_return(bio_write_all(gen_var(ssl)->rbio, gen_var(buf), n));
+    }
+
+    if (n == 0) {
+        BIO_set_mem_eof_return(gen_var(ssl)->rbio, 0);
+        gen_return(0);
+    }
+
+    gen_end(-1);
 }
 
 /* ------------------------------------------------------------
@@ -90,18 +150,23 @@ async_ssl_t* async_ssl_create(async_ssl_role_t role,
     SSL_CTX_set_min_proto_version(s->ctx, TLS1_2_VERSION);
     SSL_CTX_set_verify(s->ctx, SSL_VERIFY_PEER, NULL);
     SSL_CTX_set_default_verify_paths(s->ctx);
+    SSL_CTX_load_verify_locations(s->ctx, "./cacert.pem", NULL);
 
     s->ssl  = SSL_new(s->ctx);
     s->rbio = BIO_new(BIO_s_mem());
     s->wbio = BIO_new(BIO_s_mem());
-
+    BIO_set_write_buf_size(s->wbio, 16 * 1024);
     SSL_set_bio(s->ssl, s->rbio, s->wbio);
 
     if (role == ASYNC_SSL_CLIENT) {
         SSL_set_connect_state(s->ssl);
-        if (hostname)
+        if (hostname) {
             SSL_set_tlsext_host_name(s->ssl, hostname);
+            X509_VERIFY_PARAM *param = SSL_get0_param(s->ssl);
+            X509_VERIFY_PARAM_set1_host(param, hostname, 0);
+        }
     } else {
+        // need to load certificate file
         SSL_set_accept_state(s->ssl);
     }
 
@@ -120,8 +185,8 @@ void async_ssl_attach_socket(async_ssl_t *ssl,
 task_t* task_arg(async_ssl_handshake_) {
     gen_dec_vars(
         async_ssl_t *ssl;
-        future_t    *fut;
-        uint8_t      buf[TLS_IO_BUF];
+        task_t      *task;
+        int err;
     );
     gen_begin(ctx);
 
@@ -133,27 +198,25 @@ task_t* task_arg(async_ssl_handshake_) {
             gen_return((void*)0);
         }
 
-        int err = SSL_get_error(gen_var(ssl)->ssl, r);
+        gen_var(err) = SSL_get_error(gen_var(ssl)->ssl, r);
 
-        if (err == SSL_ERROR_WANT_WRITE) {
-            while (BIO_pending(gen_var(ssl)->wbio) > 0) {
-                gen_var(fut) = async_flush_wbio(gen_var(ssl), gen_var(buf));
-                gen_yield(gen_var(fut));
-            }
+        gen_var(task) = async_flush_wbio(gen_var(ssl));
+        gen_yield_from_task(gen_var(task));
+
+        if (future_result(gen_var(task)->future) < 0) {
+            gen_return(-1);
+        }
+
+        if (gen_var(err) == SSL_ERROR_WANT_WRITE) {
             continue;
         }
 
-        if (err == SSL_ERROR_WANT_READ) {
-            gen_var(fut) = async_feed_rbio(gen_var(ssl), gen_var(buf));
-            gen_yield(gen_var(fut));
+        if (gen_var(err) == SSL_ERROR_WANT_READ) {
+            gen_var(task) = async_feed_rbio(gen_var(ssl));
+            gen_yield_from_task(gen_var(task));
 
-            ssize_t n = (ssize_t)(intptr_t)future_result(gen_var(fut));
-            if (n <= 0) {
-                gen_return((void*)(intptr_t)-1);
-            }
-
-            if (bio_write_all(gen_var(ssl)->rbio, gen_var(buf), (int)n) < 0) {
-                gen_return((void*)(intptr_t)-1);
+            if (future_result(gen_var(task)->future) <= 0) {
+                gen_return(-1);
             }
             continue;
         }
@@ -161,6 +224,7 @@ task_t* task_arg(async_ssl_handshake_) {
         gen_return((void*)(intptr_t)-1);
     }
 
+    // Unreachable
     gen_end(NULL);
 }
 
@@ -181,8 +245,8 @@ typedef struct {
 task_t* task_arg(async_ssl_read_) {
     gen_dec_vars(
         ssl_read_arg_t a;
-        future_t      *fut;
-        uint8_t        tmp[TLS_IO_BUF];
+        task_t        *task;
+        int            err;
     );
     gen_begin(ctx);
 
@@ -197,32 +261,28 @@ task_t* task_arg(async_ssl_read_) {
             gen_return((void*)(intptr_t)n);
         }
 
-        int err = SSL_get_error(gen_var(a).ssl->ssl, n);
+        gen_var(err) = SSL_get_error(gen_var(a).ssl->ssl, n);
 
-        if (err == SSL_ERROR_WANT_WRITE) {
-            while (BIO_pending(gen_var(a).ssl->wbio) > 0) {
-                gen_var(fut) = async_flush_wbio(gen_var(a).ssl, gen_var(tmp));
-                gen_yield(gen_var(fut));
+        if (gen_var(err) == SSL_ERROR_WANT_READ) {
+            gen_var(task) = async_feed_rbio(gen_var(a).ssl);
+            gen_yield_from_task(gen_var(task));
+
+            if (future_result(gen_var(task)->future) <= 0) {
+                gen_return(-1);
             }
             continue;
         }
 
-        if (err == SSL_ERROR_WANT_READ) {
-            gen_var(fut) = async_feed_rbio(gen_var(a).ssl, gen_var(tmp));
-            gen_yield(gen_var(fut));
+        if (gen_var(err) == SSL_ERROR_WANT_WRITE) {
+            gen_var(task) = async_flush_wbio(gen_var(a).ssl);
+            gen_yield_from_task(gen_var(task));
 
-            ssize_t r = (ssize_t)(intptr_t)future_result(gen_var(fut));
-            if (r <= 0) {
-                gen_return((void*)(intptr_t)-1);
+            if (future_result(gen_var(task)->future) < 0) {
+                gen_return(-1);
             }
-
-            if (bio_write_all(gen_var(a).ssl->rbio, gen_var(tmp), (int)r) < 0) {
-                gen_return((void*)(intptr_t)-1);
-            }
-            continue;
         }
 
-        if (err == SSL_ERROR_ZERO_RETURN) {
+        if (gen_var(err) == SSL_ERROR_ZERO_RETURN) {
             gen_return((void*)0);
         }
 
@@ -254,8 +314,9 @@ task_t* task_arg(async_ssl_write_) {
     gen_dec_vars(
         ssl_write_arg_t a;
         size_t          off;
-        future_t       *fut;
-        uint8_t         tmp[TLS_IO_BUF];
+        int             err;
+        int             n;
+        task_t         *task;
     );
     gen_begin(ctx);
 
@@ -265,43 +326,50 @@ task_t* task_arg(async_ssl_write_) {
     gen_var(off) = 0;
 
     while (gen_var(off) < gen_var(a).len) {
-        int n = SSL_write(gen_var(a).ssl->ssl,
+        gen_var(n) = SSL_write(gen_var(a).ssl->ssl,
                           gen_var(a).buf + gen_var(off),
                           (int)(gen_var(a).len - gen_var(off)));
-        if (n > 0) {
-            gen_var(off) += (size_t)n;
-            while (BIO_pending(gen_var(a).ssl->wbio) > 0) {
-                gen_var(fut) = async_flush_wbio(gen_var(a).ssl, gen_var(tmp));
-                gen_yield(gen_var(fut));
+        if (gen_var(n) > 0) {
+            gen_var(off) += (size_t)gen_var(n);
+
+            gen_var(task) = async_flush_wbio(gen_var(a).ssl);
+            gen_yield_from_task(gen_var(task));
+
+            if (future_result(gen_var(task)->future) < 0) {
+                gen_return(-1);
             }
             continue;
         }
 
-        int err = SSL_get_error(gen_var(a).ssl->ssl, n);
+        gen_var(err) = SSL_get_error(gen_var(a).ssl->ssl, gen_var(n));
 
-        if (err == SSL_ERROR_WANT_WRITE)
-            continue;
+        if (gen_var(err) == SSL_ERROR_WANT_READ) {
+            gen_var(task) = async_feed_rbio(gen_var(a).ssl);
+            gen_yield_from_task(gen_var(task));
 
-        if (err == SSL_ERROR_WANT_READ) {
-            gen_var(fut) = async_feed_rbio(gen_var(a).ssl, gen_var(tmp));
-            gen_yield(gen_var(fut));
-
-            ssize_t r = (ssize_t)(intptr_t)future_result(gen_var(fut));
-            if (r <= 0) {
-                gen_return((void*)(intptr_t)-1);
-            }
-
-            if (bio_write_all(gen_var(a).ssl->rbio, gen_var(tmp), (int)r) < 0) {
-                gen_return((void*)(intptr_t)-1);
+            if (future_result(gen_var(task)->future) <= 0) {
+                gen_return(-1);
             }
             continue;
+        }
+
+        if (gen_var(err) == SSL_ERROR_WANT_WRITE) {
+            gen_var(task) = async_flush_wbio(gen_var(a).ssl);
+            gen_yield_from_task(gen_var(task));
+
+            if (future_result(gen_var(task)->future) < 0) {
+                gen_return(-1);
+            }
+        }
+
+        if (gen_var(err) == SSL_ERROR_ZERO_RETURN) {
+            gen_return((void*)0);
         }
 
         gen_return((void*)(intptr_t)-1);
     }
 
-    gen_return((void*)0);
-    gen_end(NULL);
+    gen_end(gen_var(a).len);
 }
 
 task_t* async_ssl_write(async_ssl_t *ssl,
@@ -321,28 +389,54 @@ task_t* async_ssl_write(async_ssl_t *ssl,
 task_t* task_arg(async_ssl_close_) {
     gen_dec_vars(
         async_ssl_t *ssl;
-        future_t    *fut;
-        uint8_t      buf[TLS_IO_BUF];
+        int          err;
+        int          n;
+        task_t      *task;
     );
     gen_begin(ctx);
 
     gen_var(ssl) = (async_ssl_t*)arg;
 
-    SSL_shutdown(gen_var(ssl)->ssl);
-    while (BIO_pending(gen_var(ssl)->wbio) > 0) {
-        gen_var(fut) = async_flush_wbio(gen_var(ssl), gen_var(buf));
-        gen_yield(gen_var(fut));
-    }
+    for (;;) {
+        gen_var(n) = SSL_shutdown(gen_var(ssl)->ssl);
+        if (gen_var(n) == 1)
+            break;
 
-    SSL_shutdown(gen_var(ssl)->ssl);
-    while (BIO_pending(gen_var(ssl)->wbio) > 0) {
-        gen_var(fut) = async_flush_wbio(gen_var(ssl), gen_var(buf));
-        gen_yield(gen_var(fut));
+        if (gen_var(n) == 0) {
+            gen_var(task) = async_flush_wbio(gen_var(ssl));
+            gen_yield_from_task(gen_var(task));
+
+            if (future_result(gen_var(task)->future) < 0) {
+                gen_return(-1);
+            }
+            continue;
+        }
+
+        gen_var(err) = SSL_get_error(gen_var(ssl)->ssl, gen_var(n));
+
+        if (gen_var(err) == SSL_ERROR_WANT_READ) {
+            gen_var(task) = async_feed_rbio(gen_var(ssl));
+            gen_yield_from_task(gen_var(task));
+
+            if (future_result(gen_var(task)->future) <= 0) {
+                gen_return(-1);
+            }
+            continue;
+        }
+
+        if (gen_var(err) == SSL_ERROR_WANT_WRITE) {
+            gen_var(task) = async_flush_wbio(gen_var(ssl));
+            gen_yield_from_task(gen_var(task));
+
+            if (future_result(gen_var(task)->future) < 0) {
+                gen_return(-1);
+            }
+        }
+        break;
     }
 
     gen_var(ssl)->closed = 1;
-    gen_return((void*)0);
-    gen_end(NULL);
+    gen_end(0);
 }
 
 task_t* async_ssl_close(async_ssl_t *ssl) {
@@ -425,7 +519,6 @@ sync_ssl_t* sync_ssl_create(sync_ssl_role_t role,
     SSL_CTX_set_default_verify_paths(s->ctx);
     SSL_CTX_load_verify_locations(s->ctx, "./cacert.pem", NULL);
 
-
     s->ssl  = SSL_new(s->ctx);
     s->rbio = BIO_new(BIO_s_mem());
     s->wbio = BIO_new(BIO_s_mem());
@@ -436,9 +529,8 @@ sync_ssl_t* sync_ssl_create(sync_ssl_role_t role,
         SSL_set_connect_state(s->ssl);
         if (hostname) {
             SSL_set_tlsext_host_name(s->ssl, hostname);
-            printf("Hostname: %s", hostname);
-            // X509_VERIFY_PARAM *param = SSL_get0_param(s->ssl);
-            // X509_VERIFY_PARAM_set1_host(param, hostname, 0);
+            X509_VERIFY_PARAM *param = SSL_get0_param(s->ssl);
+            X509_VERIFY_PARAM_set1_host(param, hostname, 0);
         }
 
     } else {
@@ -479,9 +571,6 @@ int sync_ssl_handshake(sync_ssl_t *ssl) {
                 return -1;
             continue;
         }
-
-        long verify_result = SSL_get_verify_result(ssl->ssl);
-        printf("verify_result = %ld\n", verify_result);
         return -1;
     }
 }
