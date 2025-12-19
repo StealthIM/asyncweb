@@ -71,6 +71,8 @@ task_t *task_arg(async_flush_wbio) {
         uint8_t buf[TLS_IO_BUF];
         future_t *fut;
         int off;
+        int s;
+        int n;
     );
     gen_begin(ctx)
 
@@ -82,26 +84,26 @@ task_t *task_arg(async_flush_wbio) {
             gen_return(0);
         }
 
-        int n = BIO_read(gen_var(ssl)->wbio, gen_var(buf), sizeof(gen_var(buf)));
-        if (n < 0) {
+        gen_var(n) = BIO_read(gen_var(ssl)->wbio, gen_var(buf), sizeof(gen_var(buf)));
+        if (gen_var(n) < 0) {
             gen_return(-1);
         }
-        if (n == 0) {
+        if (gen_var(n) == 0) {
             gen_return(0);
         }
 
         gen_var(off) = 0;
-        while (gen_var(off) < n) {
+        while (gen_var(off) < gen_var(n)) {
             gen_var(fut) = async_socket_send(
                 gen_var(ssl)->sock,
-                gen_var(buf) + gen_var(off), n - gen_var(off)
+                gen_var(buf) + gen_var(off), gen_var(n) - gen_var(off)
             );
             gen_yield(gen_var(fut));
-            int s = (int)future_result(gen_var(fut));
-            if (s <= 0) {
+            gen_var(s) = (int)future_result(gen_var(fut));
+            if (gen_var(s) <= 0) {
                 gen_return(-1);
             }
-            gen_var(off) += s;
+            gen_var(off) += gen_var(s);
         }
     }
 
@@ -113,6 +115,7 @@ task_t* task_arg(async_feed_rbio) {
         async_ssl_t *ssl;
         uint8_t buf[TLS_IO_BUF];
         future_t *fut;
+        int n;
     );
     gen_begin(ctx)
 
@@ -123,13 +126,14 @@ task_t* task_arg(async_feed_rbio) {
         gen_var(buf), sizeof(gen_var(buf))
     );
     gen_yield(gen_var(fut));
-    int n = (int)future_result(gen_var(fut));
+    gen_var(n) = (int)future_result(gen_var(fut));
 
-    if (n > 0) {
-        gen_return(bio_write_all(gen_var(ssl)->rbio, gen_var(buf), n));
+    if (gen_var(n) > 0) {
+        int ret = bio_write_all(gen_var(ssl)->rbio, gen_var(buf), gen_var(n));
+        gen_return(ret);
     }
 
-    if (n == 0) {
+    if (gen_var(n) == 0) {
         BIO_set_mem_eof_return(gen_var(ssl)->rbio, 0);
         gen_return(0);
     }

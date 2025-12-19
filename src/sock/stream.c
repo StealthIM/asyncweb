@@ -54,57 +54,12 @@ task_t* task_arg(async_stream_close_) {
 
     // no explicit close for sock needed, assume managed externally
     free(gen_var(s));
-    gen_return((void*)0);
-    gen_end(NULL);
+    gen_end(0);
 }
 
 task_t* async_stream_close(async_stream_t *s)
 {
     return async_stream_close_(s);
-}
-
-/* ==============================
- * 内部 read helper
- * ============================== */
-
-static task_t* task_arg(stream_fill_buf_) {
-    gen_dec_vars(
-        async_stream_t *s;
-        future_t       *fut;
-        task_t         *task;
-        ssize_t         n;
-    );
-    gen_begin(ctx);
-
-    {
-        async_stream_t *in = (async_stream_t*)arg;
-        gen_var(s) = in;
-    }
-
-    if (gen_var(s)->ssl) {
-        gen_var(task) = async_ssl_read(gen_var(s)->ssl,
-                                      gen_var(s)->read_buf,
-                                      STREAM_INTERNAL_BUF);
-        gen_yield_from_task(gen_var(task));
-        gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(task)->future);
-        if (gen_var(n) <= 0) {
-            gen_return((void*)(intptr_t)-1);
-        }
-    } else {
-        gen_var(fut) = async_socket_recv(gen_var(s)->sock,
-                                         gen_var(s)->read_buf,
-                                         STREAM_INTERNAL_BUF);
-        gen_yield(gen_var(fut));
-        gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(fut));
-        if (gen_var(n) <= 0) {
-            gen_return((void*)(intptr_t)-1);
-        }
-    }
-
-    gen_var(s)->read_buf_off = 0;
-    gen_var(s)->read_buf_len = (size_t)gen_var(n);
-    gen_return((void*)0);
-    gen_end(NULL);
 }
 
 /* ==============================
@@ -120,7 +75,7 @@ typedef struct {
 task_t* task_arg(async_stream_read_exactly_) {
     gen_dec_vars(
         stream_read_arg_t arg_copy;
-        size_t            off;
+        size_t            total_read;
         future_t         *fut;
         task_t           *task;
     );
@@ -131,23 +86,17 @@ task_t* task_arg(async_stream_read_exactly_) {
         gen_var(arg_copy) = *in;
         free(in);
     }
-    gen_var(off) = 0;
+    gen_var(total_read) = 0;
 
-    while (gen_var(off) < gen_var(arg_copy.len)) {
-        if (gen_var(arg_copy.s)->read_buf_off >= gen_var(arg_copy.s)->read_buf_len) {
-            gen_var(task) = stream_fill_buf_(gen_var(arg_copy.s));
-            gen_yield_from_task(gen_var(task));
+    while (gen_var(total_read) < gen_var(arg_copy.len)) {
+        gen_var(task) = async_stream_read(gen_var(arg_copy).s, 1, gen_var(arg_copy).buf + gen_var(total_read));
+        gen_yield_from_task(gen_var(task));
+
+        int result = (int)future_result(gen_var(task)->future);
+        if (result <= 0) {
+            gen_return(-1);
         }
-
-        size_t avail = gen_var(arg_copy.s)->read_buf_len - gen_var(arg_copy.s)->read_buf_off;
-        size_t need  = gen_var(arg_copy.len) - gen_var(off);
-        size_t to_copy = avail < need ? avail : need;
-
-        memcpy((uint8_t*)gen_var(arg_copy.buf) + gen_var(off),
-               gen_var(arg_copy.s)->read_buf + gen_var(arg_copy.s)->read_buf_off,
-               to_copy);
-        gen_var(arg_copy.s)->read_buf_off += to_copy;
-        gen_var(off) += to_copy;
+        gen_var(total_read) += result;
     }
 
     gen_return(0);
@@ -309,7 +258,6 @@ typedef struct {
     char            delimiter;
     void           *buf;
     size_t          max_len;
-    size_t          out_len;
 } stream_read_until_arg_t;
 
 task_t* task_arg(async_stream_read_until_) {
@@ -317,7 +265,7 @@ task_t* task_arg(async_stream_read_until_) {
         stream_read_until_arg_t arg_copy;
         task_t   *task;
         uint8_t   byte;
-        size_t    off;
+        size_t    total_read;
     );
     gen_begin(ctx);
 
@@ -327,30 +275,28 @@ task_t* task_arg(async_stream_read_until_) {
         free(in);
     }
 
-    gen_var(off) = 0;
+    gen_var(total_read) = 0;
 
-    while (gen_var(off) < gen_var(arg_copy).max_len) {
-        if (gen_var(arg_copy).s->read_buf_off >= gen_var(arg_copy).s->read_buf_len) {
-            gen_var(task) = stream_fill_buf_(gen_var(arg_copy).s);
-            gen_yield_from_task(gen_var(task));
-        }
+    while (gen_var(total_read) < gen_var(arg_copy).max_len - 1) {
+        gen_var(task) = async_stream_read(gen_var(arg_copy).s, 1, &gen_var(byte));
+        gen_yield_from_task(gen_var(task));
 
-        uint8_t *buf_ptr = gen_var(arg_copy).s->read_buf + gen_var(arg_copy).s->read_buf_off;
-        size_t avail = gen_var(arg_copy).s->read_buf_len - gen_var(arg_copy).s->read_buf_off;
-        size_t i;
-        for (i = 0; i < avail && gen_var(off) < gen_var(arg_copy).max_len; ++i) {
-            uint8_t b = buf_ptr[i];
-            ((uint8_t*)gen_var(arg_copy).buf)[gen_var(off)++] = b;
-            if (b == gen_var(arg_copy).delimiter) {
-                gen_var(arg_copy).out_len = gen_var(off);
-                gen_var(arg_copy).s->read_buf_off += i + 1;
-                gen_return((void*)(intptr_t)gen_var(arg_copy).out_len);
+        int result = (int)future_result(gen_var(task)->future);
+        if (result <= 0) {
+            if (gen_var(total_read) == 0) {
+                gen_return(-1);
             }
+            break;
         }
-        gen_var(arg_copy).s->read_buf_off += i;
+        ((uint8_t*)gen_var(arg_copy).buf)[gen_var(total_read)++] = gen_var(byte);
+        if (gen_var(byte) == gen_var(arg_copy).delimiter) {
+            break;
+        }
     }
 
-    gen_return((void*)(intptr_t)-1); // 未找到 delimiter
+    // 添加 null 终止符
+    ((uint8_t*)gen_var(arg_copy).buf)[gen_var(total_read)] = '\0';
+    gen_return((void*)(intptr_t)gen_var(total_read));
     gen_end(NULL);
 }
 
@@ -365,7 +311,6 @@ task_t* async_stream_read_until(async_stream_t *s,
     a->delimiter = delimiter;
     a->buf = buf;
     a->max_len = max_len;
-    a->out_len = 0;
     return async_stream_read_until_(a);
 }
 
@@ -508,9 +453,8 @@ int sync_stream_read_until(sync_stream_t *s, char delimiter, void *buf, size_t m
     size_t total_read = 0;
 
     while (total_read < max_len - 1) {
-        int byte;
         uint8_t c;
-        
+
         int result = sync_stream_read(s, 1, &c);
         if (result <= 0) {
             if (total_read == 0) return -1;
@@ -518,7 +462,7 @@ int sync_stream_read_until(sync_stream_t *s, char delimiter, void *buf, size_t m
         }
 
         ptr[total_read++] = c;
-        
+
         if (c == delimiter) {
             break;
         }

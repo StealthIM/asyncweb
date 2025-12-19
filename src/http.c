@@ -329,17 +329,19 @@ anet_status_t anet_sync_http_request(const char *method,
         }
         
         stream = sync_stream_from_ssl(ssl);
+        if (!stream) {
+            sync_ssl_destroy(ssl);
+            anet_palsock_close(sock);
+            anet_palsock_cleanup();
+            return ANET_ERR;
+        }
     } else {
         stream = sync_stream_from_socket(sock);
-    }
-    
-    if (!stream) {
-        if (is_ssl) {
-            sync_ssl_destroy(sync_stream_get_ssl(stream));
+        if (!stream) {
+            anet_palsock_close(sock);
+            anet_palsock_cleanup();
+            return ANET_ERR;
         }
-        anet_palsock_close(sock);
-        anet_palsock_cleanup();
-        return ANET_ERR;
     }
     
     // 创建请求

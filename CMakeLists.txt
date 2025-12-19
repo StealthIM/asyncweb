@@ -44,6 +44,7 @@ list(APPEND SRC_FILES
         src/common.c
         src/tools.c
         src/http.c
+        src/ws.c
         src/sock/future_socket.c
         src/sock/stream.c
 )
@@ -105,8 +106,12 @@ if(ASYNCWEB_STANDALONE)
             tests/main.c
             tests/test_sync_http.c
             tests/test_async_http.c
+            tests/test_sync_ws.c
+            tests/test_async_ws.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
     add_test_with_dir(test_sync_http test_asyncweb sync_http)
     add_test_with_dir(test_async_http test_asyncweb async_http)
+    add_test_with_dir(test_sync_ws test_asyncweb sync_ws)
+    add_test_with_dir(test_async_ws test_asyncweb async_ws)
 endif()
