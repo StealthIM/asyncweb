@@ -1,5 +1,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
+#include <openssl/sha.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -732,4 +734,16 @@ void sync_ssl_destroy(sync_ssl_t *ssl) {
     SSL_free(ssl->ssl);
     SSL_CTX_free(ssl->ctx);
     free(ssl);
+}
+
+/* ============================================================
+ * 后端无关 crypto 原语 (OpenSSL 实现)
+ * ============================================================ */
+
+int anet_tls_rand_bytes(unsigned char *buf, size_t len) {
+    return RAND_bytes(buf, (int)len) == 1 ? 0 : -1;
+}
+
+int anet_tls_sha1(const unsigned char *data, size_t len, unsigned char *out) {
+    return SHA1(data, len, out) != NULL ? 0 : -1;
 }

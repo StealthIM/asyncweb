@@ -55,6 +55,20 @@ extern "C" {
     int async_ssl_is_closed(async_ssl_t *ssl);
 
     // =======================================================
+    // 后端无关的 crypto 原语 (供 WS 握手用,由各 TLS 后端实现)
+    //
+    // WebSocket 握手需要随机数 (Sec-WebSocket-Key) 和 SHA1
+    // (Sec-WebSocket-Accept),但这不该绑死在某个 TLS 库上。
+    // 每个后端 (openssl.c / wolfssl.c) 各用自己的 crypto 实现。
+    // =======================================================
+
+    // 生成 len 字节的密码学随机数写入 buf。成功返回 0,失败 -1。
+    int anet_tls_rand_bytes(unsigned char *buf, size_t len);
+
+    // 计算 data[0..len) 的 SHA1,写入 out (须 >= 20 字节)。成功返回 0,失败 -1。
+    int anet_tls_sha1(const unsigned char *data, size_t len, unsigned char *out);
+
+    // =======================================================
     // 同步 SSL 接口
     // =======================================================
     

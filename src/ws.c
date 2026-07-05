@@ -7,8 +7,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
-#include <openssl/sha.h>
-#include <openssl/rand.h>
 #include "libcoro.h"
 
 // RFC6455 magic GUID appended to Sec-WebSocket-Key before hashing.
@@ -70,7 +68,7 @@ static int base64_encode(const unsigned char* src, int len, char* out, int out_s
 
 static void generate_websocket_key(char out[64]) {
     unsigned char rand_bytes[16];
-    if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1) {
+    if (anet_tls_rand_bytes(rand_bytes, sizeof(rand_bytes)) != 0) {
         // Fall back to a time-seeded PRNG if the CSPRNG is unavailable.
         for (int i = 0; i < 16; i++)
             rand_bytes[i] = (unsigned char)(rand() & 0xFF);
@@ -82,9 +80,9 @@ static void generate_websocket_key(char out[64]) {
 static void compute_ws_accept(const char *sec_key, char out[64]) {
     char concat[128];
     snprintf(concat, sizeof(concat), "%s%s", sec_key, WS_ACCEPT_GUID);
-    unsigned char digest[SHA_DIGEST_LENGTH];
-    SHA1((const unsigned char*)concat, strlen(concat), digest);
-    base64_encode(digest, SHA_DIGEST_LENGTH, out, 64);
+    unsigned char digest[20];   /* SHA1 digest = 20 bytes */
+    anet_tls_sha1((const unsigned char*)concat, strlen(concat), digest);
+    base64_encode(digest, 20, out, 64);
 }
 
 // 从请求头缓冲中提取 Sec-WebSocket-Key 的值到 out (最多 out_size-1 字节)。

@@ -10,8 +10,8 @@ option(ASYNCWEB_STANDALONE "Build asyncweb standalone" OFF)
 set(ASYNCWEB_OS_BACKEND "" CACHE STRING "Choose OS backend: posix, win")
 set_property(CACHE ASYNCWEB_OS_BACKEND PROPERTY STRINGS posix win)
 
-set(ASYNCWEB_SSL_BACKEND "" CACHE STRING "Choose SSL backend: openssl")
-set_property(CACHE ASYNCWEB_OS_BACKEND PROPERTY STRINGS openssl)
+set(ASYNCWEB_SSL_BACKEND "" CACHE STRING "Choose SSL backend: openssl, wolfssl")
+set_property(CACHE ASYNCWEB_SSL_BACKEND PROPERTY STRINGS openssl wolfssl)
 
 set(ASYNCWEB_WS "" CACHE STRING "Choose websocket: on/off")
 set_property(CACHE ASYNCWEB_WS PROPERTY STRINGS on off)
@@ -81,6 +81,32 @@ if(ASYNCWEB_SSL_BACKEND STREQUAL "openssl")
             OpenSSL::SSL
             OpenSSL::Crypto
     )
+elseif(ASYNCWEB_SSL_BACKEND STREQUAL "wolfssl")
+    list(APPEND SRC_FILES
+            src/tls/wolfssl.c
+    )
+    # wolfSSL 通过 FetchContent 拉取 (可用 FETCHCONTENT_SOURCE_DIR_WOLFSSL 指向本地
+    # 源码免网络)。开启后端所需特性:TLS1.3、自定义 IO 回调、IP alt-name (测试证书
+    # 用 IP:127.0.0.1 SAN);关掉 examples/crypttests/install 以缩短构建。
+    include(FetchContent)
+    set(WOLFSSL_TLS13     "yes" CACHE STRING "" FORCE)
+    set(WOLFSSL_IP_ALT_NAME "yes" CACHE STRING "" FORCE)
+    set(WOLFSSL_EXAMPLES  "no"  CACHE STRING "" FORCE)
+    set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "" FORCE)
+    set(WOLFSSL_INSTALL   "no"  CACHE STRING "" FORCE)
+    FetchContent_Declare(
+            wolfssl
+            GIT_REPOSITORY https://github.com/wolfSSL/wolfssl.git
+            GIT_TAG v5.9.2-stable
+    )
+    FetchContent_MakeAvailable(wolfssl)
+    # 交叉编译到 Windows 时,wolfSSL 的 CMake 不会自动定义 USE_WINDOWS_API,
+    # 于是种子源退回 POSIX /dev/urandom——在 Wine 下 wc_InitRng 会卡死。
+    # 显式打开,让它用 CryptGenRandom (Wine 有实现)。
+    if(WIN32)
+        target_compile_definitions(wolfssl PUBLIC USE_WINDOWS_API)
+    endif()
+    target_link_libraries(asyncweb PUBLIC wolfssl)
 else()
     message(FATAL_ERROR "No valid SSL backend selected.")
 endif()

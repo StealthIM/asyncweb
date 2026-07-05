@@ -1,8 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <openssl/err.h>
-#include <openssl/ssl.h>
 
 #include "asyncweb.h"
 
@@ -39,7 +37,6 @@ int test_sync_http() {
     result = anet_sync_http_get("https://postman-echo.com/get", &response);
     if (result != ANET_OK) {
         printf("HTTPS GET request failed\n");
-        ERR_print_errors_fp(stderr);
         exit(1);
     }
 
