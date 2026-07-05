@@ -123,6 +123,9 @@ if(ASYNCWEB_STANDALONE)
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
     # keep-alive 测试需要低层 async socket/stream API 建可复用连接
     target_include_directories(test_asyncweb PRIVATE include/private)
+    # TLS 测试用预生成证书 (与 TLS 后端解耦);注入绝对路径,测试 chdir 后仍能拷贝
+    target_compile_definitions(test_asyncweb PRIVATE
+            CERTS_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/certs")
     add_test_with_dir(test_sync_http test_asyncweb sync_http)
     add_test_with_dir(test_async_http test_asyncweb async_http)
     add_test_with_dir(test_sync_ws test_asyncweb sync_ws)
