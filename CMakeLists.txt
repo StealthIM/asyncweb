@@ -71,7 +71,10 @@ if(ASYNCWEB_SSL_BACKEND STREQUAL "openssl")
     list(APPEND SRC_FILES
             src/tls/openssl.c
     )
-    find_package(OpenSSL CONFIG REQUIRED)
+    # Use module mode (builtin FindOpenSSL.cmake) rather than CONFIG mode:
+    # it discovers OpenSSL on hosts without an OpenSSLConfig.cmake (e.g.
+    # MinGW-w64 cross toolchains) while still working where a config exists.
+    find_package(OpenSSL REQUIRED)
 
     target_link_libraries(asyncweb
             PUBLIC

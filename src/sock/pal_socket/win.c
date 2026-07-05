@@ -146,8 +146,11 @@ int anet_palsock_resolve(const char *hostname,
                      struct sockaddr_storage *out_addr,
                      int *out_len)
 {
+    // Sockets are created as AF_INET throughout, so resolve to IPv4 only —
+    // otherwise an AF_UNSPEC result may hand back an IPv6 address that an
+    // AF_INET socket cannot connect to. (matches posix.c)
     struct addrinfo hints = {0};
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res;

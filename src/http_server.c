@@ -6,9 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <strings.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
+/* 网络类型/字节序 (sockaddr_in, htons, INADDR_LOOPBACK 等) 及大小写不敏感
+   比较由 pal_socket.h 按平台提供正确的系统头 (winsock2/ws2tcpip 或 netinet)。 */
 
 #define SRV_REQ_MAX    (64 * 1024)
 #define SRV_READ_CHUNK 4096
@@ -41,11 +40,13 @@ typedef struct {
 static int parse_request_head(char *buf, size_t len,
                               char **method_out, char **path_out,
                               char **headers_start_out, size_t *head_len_out) {
-    char *he = memmem(buf, len, "\r\n\r\n", 4);
+    /* buf 由调用方保证 NUL 结尾,HTTP 头无内嵌 NUL,可安全用 strstr (可移植)。 */
+    (void)len;
+    char *he = strstr(buf, "\r\n\r\n");
     if (!he) return -1;
     *head_len_out = (size_t)((he + 4) - buf);
 
-    char *rl_end = memmem(buf, len, "\r\n", 2);
+    char *rl_end = strstr(buf, "\r\n");
     if (!rl_end) return -1;
     *headers_start_out = rl_end + 2;
     *rl_end = '\0';   /* 终止请求行,不影响其后的头部区 */

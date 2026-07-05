@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
+/* sockaddr_in / htons 等由 asyncweb.h -> pal_socket.h 按平台提供。 */
 #include "libcoro.h"
 #include "asyncweb.h"
 
