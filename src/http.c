@@ -128,9 +128,8 @@ static char* create_request_string(const char *method,
     // 构建请求
     sprintf(request, "%s %s HTTP/1.1\r\n", method, path);
     
-    // Host 头部
-    if ((port == 80 && strcmp(method, "http") == 0) || 
-        (port == 443 && strcmp(method, "https") == 0)) {
+    // Host 头部：标准端口（80/443）省略端口号，其余带端口
+    if (port == 80 || port == 443) {
         sprintf(request + strlen(request), "Host: %s\r\n", host);
     } else {
         sprintf(request + strlen(request), "Host: %s:%d\r\n", host, port);
