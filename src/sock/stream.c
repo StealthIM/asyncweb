@@ -40,6 +40,7 @@ async_stream_t* async_stream_from_ssl(async_ssl_t *ssl)
 task_t* task_arg(async_stream_close_) {
     gen_dec_vars(
         async_stream_t *s;
+        task_t *task;
     );
     gen_begin(ctx);
 
@@ -49,17 +50,32 @@ task_t* task_arg(async_stream_close_) {
     }
 
     if (gen_var(s)->ssl) {
-        gen_yield_from_task(async_ssl_close(gen_var(s)->ssl));
+        // 必须先求值再传给 gen_yield_from_task：该宏会多次展开其参数，
+        // 内联 async_ssl_close(...) 会导致协程被创建多次并泄漏。
+        gen_var(task) = async_ssl_close(gen_var(s)->ssl);
+        gen_yield_from_task(gen_var(task));
     }
 
-    // no explicit close for sock needed, assume managed externally
-    free(gen_var(s));
+    // close 只负责优雅关闭协议层；内存释放交给 async_stream_destroy。
     gen_end(0);
 }
 
 task_t* async_stream_close(async_stream_t *s)
 {
     return async_stream_close_(s);
+}
+
+void async_stream_destroy(async_stream_t *s)
+{
+    if (!s) return;
+    if (s->ssl) {
+        async_ssl_destroy(s->ssl);
+    }
+    if (s->sock) {
+        async_socket_close(s->sock);
+        free(s->sock);
+    }
+    free(s);
 }
 
 /* ==============================

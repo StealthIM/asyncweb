@@ -25,6 +25,9 @@ extern "C" {
     // 关闭 stream
     task_t* async_stream_close(async_stream_t *s);
 
+    // 同步销毁 stream 及其底层 socket/ssl（不发送 close_notify，用于 teardown）
+    void async_stream_destroy(async_stream_t *s);
+
     // 读至少 1 字节，最多 max_len
     task_t* async_stream_read(async_stream_t *s, size_t max_len, void *buf);
 

@@ -364,6 +364,8 @@ void anet_sync_ws_destroy(anet_sync_ws_t *ws) {
         if (ws->state == ANET_WS_OPEN) {
             anet_sync_ws_close(ws);
         }
+        // sync_stream_destroy 释放底层 socket/ssl 及 stream 本身。
+        sync_stream_destroy(ws->stream);
         free(ws);
     }
 }
@@ -389,6 +391,7 @@ typedef struct {
     char sec_key[64];
     char req[1024];
     char buf[1024];
+    int ok;   /* set once ownership of stream/sock/ssl has passed to the ws object */
 } async_ws_connect_internal_t;
 
 // 异步WebSocket连接协程
@@ -420,7 +423,6 @@ task_t* task_arg(anet_async_ws_connect_) {
         
         // 解析URL
         if (parse_url(gen_var(conn)->url, &gen_var(conn)->is_tls, gen_var(conn)->host, &gen_var(conn)->port, gen_var(conn)->path) != 0) {
-            free(gen_var(conn));
             gen_return((void*)(intptr_t)ANET_ERR);
         }
     }
@@ -431,16 +433,11 @@ task_t* task_arg(anet_async_ws_connect_) {
     // 步骤2: 创建socket
     gen_var(conn)->sock = anet_palsock_create(AF_INET, SOCK_STREAM, 0, 1);
     if (!anet_palsock_is_valid(gen_var(conn)->sock)) {
-        anet_palsock_cleanup();
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 步骤3: 解析地址
     if (anet_palsock_resolve(gen_var(conn)->host, &gen_var(addr), &gen_var(addr_len)) != 0) {
-        anet_palsock_close(gen_var(conn)->sock);
-        anet_palsock_cleanup();
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
@@ -454,9 +451,6 @@ task_t* task_arg(anet_async_ws_connect_) {
     // 创建异步socket
     gen_var(conn)->async_sock = async_socket_create(gen_var(conn)->sock);
     if (!gen_var(conn)->async_sock) {
-        anet_palsock_close(gen_var(conn)->sock);
-        anet_palsock_cleanup();
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
@@ -464,9 +458,6 @@ task_t* task_arg(anet_async_ws_connect_) {
     gen_var(fut) = async_socket_connect(gen_var(conn)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
     gen_yield(gen_var(fut));
     if (future_is_rejected(gen_var(fut))) {
-        anet_palsock_close(gen_var(conn)->sock);
-        anet_palsock_cleanup();
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
@@ -474,9 +465,6 @@ task_t* task_arg(anet_async_ws_connect_) {
     if (gen_var(conn)->is_tls) {
         gen_var(conn)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(conn)->host);
         if (!gen_var(conn)->async_ssl) {
-            anet_palsock_close(gen_var(conn)->sock);
-            anet_palsock_cleanup();
-            free(gen_var(conn));
             gen_return((void*)(intptr_t)ANET_ERR);
         }
 
@@ -487,25 +475,16 @@ task_t* task_arg(anet_async_ws_connect_) {
         gen_yield_from_task(gen_var(task));
 
         if (future_result(gen_var(task)->future) != (void*)0) {
-            anet_palsock_close(gen_var(conn)->sock);
-            anet_palsock_cleanup();
-            free(gen_var(conn));
             gen_return((void*)(intptr_t)ANET_ERR);
         }
 
         gen_var(conn)->stream = async_stream_from_ssl(gen_var(conn)->async_ssl);
         if (!gen_var(conn)->stream) {
-            anet_palsock_close(gen_var(conn)->sock);
-            anet_palsock_cleanup();
-            free(gen_var(conn));
             gen_return((void*)(intptr_t)ANET_ERR);
         }
     } else {
         gen_var(conn)->stream = async_stream_from_socket(gen_var(conn)->async_sock);
         if (!gen_var(conn)->stream) {
-            anet_palsock_close(gen_var(conn)->sock);
-            anet_palsock_cleanup();
-            free(gen_var(conn));
             gen_return((void*)(intptr_t)ANET_ERR);
         }
     }
@@ -513,17 +492,9 @@ task_t* task_arg(anet_async_ws_connect_) {
     // 创建WebSocket对象
     gen_var(ws) = calloc(1, sizeof(*gen_var(ws)));
     if (!gen_var(ws)) {
-        if (gen_var(conn)->is_tls) {
-            // SSL和async_sock会被async_stream_close清理
-        } else {
-            async_socket_close(gen_var(conn)->async_sock);
-            anet_palsock_close(gen_var(conn)->sock);
-        }
-        anet_palsock_cleanup();
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
-    
+
     gen_var(ws)->stream = gen_var(conn)->stream;
     gen_var(ws)->state = ANET_WS_CONNECTING;
     gen_var(ws)->is_tls = gen_var(conn)->is_tls;
@@ -544,10 +515,6 @@ task_t* task_arg(anet_async_ws_connect_) {
     gen_yield_from_task(gen_var(task));
 
     if (future_result(gen_var(task)->future) != (void*)0) {
-        async_stream_close(gen_var(conn)->stream);
-        anet_palsock_cleanup();
-        free(gen_var(ws));
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
@@ -557,17 +524,11 @@ task_t* task_arg(anet_async_ws_connect_) {
 
     gen_var(len) = (int)(intptr_t)future_result(gen_var(task)->future);
     if (gen_var(len) <= 0) {
-        async_stream_close(gen_var(conn)->stream);
-        free(gen_var(ws));
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     gen_var(conn)->buf[gen_var(len)] = 0;
     if (strstr(gen_var(conn)->buf, "101") == NULL) {
-        async_stream_close(gen_var(conn)->stream);
-        free(gen_var(ws));
-        free(gen_var(conn));
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
@@ -578,9 +539,6 @@ task_t* task_arg(anet_async_ws_connect_) {
 
         gen_var(len) = (int)(intptr_t)future_result(gen_var(task)->future);
         if (gen_var(len) <= 0) {
-            async_stream_close(gen_var(conn)->stream);
-            free(gen_var(ws));
-            free(gen_var(conn));
             gen_return((void*)(intptr_t)ANET_ERR);
         }
 
@@ -589,12 +547,34 @@ task_t* task_arg(anet_async_ws_connect_) {
             break;
         }
     }
-    
+
+    // 成功：stream/async_sock/async_ssl 的所有权移交给 ws 对象。
     gen_var(ws)->state = ANET_WS_OPEN;
-    anet_palsock_cleanup();
     *(gen_var(conn)->ws_out) = gen_var(ws);
-    free(gen_var(conn));
+    gen_var(conn)->ok = 1;
     gen_return((void*)(intptr_t)ANET_OK);
+
+    gen_cleanup();
+    // 统一 teardown。成功时 ok=1，资源已归 ws，仅释放临时 conn；
+    // 失败时释放本协程分配的全部资源（含 ws 与底层 socket/ssl）。
+    if (gen_var(conn)) {
+        if (!gen_var(conn)->ok) {
+            free(gen_var(ws));
+            free(gen_var(conn)->stream);
+            if (gen_var(conn)->async_ssl) {
+                // async_ssl 拥有并释放它 attach 的 async_sock。
+                async_ssl_destroy(gen_var(conn)->async_ssl);
+            } else if (gen_var(conn)->async_sock) {
+                async_socket_close(gen_var(conn)->async_sock);
+                free(gen_var(conn)->async_sock);
+            } else if (anet_palsock_is_valid(gen_var(conn)->sock)) {
+                anet_palsock_close(gen_var(conn)->sock);
+            }
+        }
+        anet_palsock_cleanup();
+        free(gen_var(conn));
+        gen_var(conn) = NULL;
+    }
     gen_end(NULL);
 }
 
@@ -911,13 +891,9 @@ void anet_ws_message_free(anet_ws_message_t *msg) {
 // 销毁WebSocket连接
 void anet_async_ws_destroy(anet_async_ws_t *ws) {
     if (ws) {
-        if (ws->state == ANET_WS_OPEN) {
-            // 同步关闭，因为销毁函数不能返回task
-            unsigned char closef[2] = {0x88, 0x00};
-            async_stream_write_all(ws->stream, closef, 2);
-            async_stream_close(ws->stream);
-            ws->state = ANET_WS_CLOSED;
-        }
+        // 直接同步释放底层 stream/socket/ssl。不发送 close_notify——
+        // 那需要异步 task，销毁函数无法驱动事件循环。
+        async_stream_destroy(ws->stream);
         free(ws);
     }
 }

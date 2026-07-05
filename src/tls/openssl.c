@@ -447,6 +447,23 @@ task_t* async_ssl_close(async_ssl_t *ssl) {
     return async_ssl_close_(ssl);
 }
 
+void async_ssl_destroy(async_ssl_t *ssl) {
+    if (!ssl) return;
+    // SSL_free releases the rbio/wbio handed to SSL_set_bio.
+    SSL_free(ssl->ssl);
+    SSL_CTX_free(ssl->ctx);
+    // The attached async socket's ownership passed to us; release it.
+    if (ssl->sock) {
+        async_socket_close(ssl->sock);
+        free(ssl->sock);
+    }
+    free(ssl);
+}
+
+int async_ssl_is_closed(async_ssl_t *ssl) {
+    return ssl ? ssl->closed : 1;
+}
+
 /* ============================================================
  * sync SSL
  * ============================================================ */

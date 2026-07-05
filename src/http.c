@@ -613,34 +613,31 @@ task_t* task_arg(anet_async_http_request_) {
             // 读取完成，解析响应
             if (gen_var(req)->total_read > 0) {
                 int result = parse_response(gen_var(req)->response_data, gen_var(req)->total_read, gen_var(req)->response, 1);
-                free(gen_var(req)->response_data);
-                gen_var(req)->response_data = NULL;
                 gen_return((void*)(intptr_t)(result == 0 ? ANET_OK : ANET_ERR));
             }
             gen_return((void*)(intptr_t)ANET_ERR);
         }
-        
+
         // 扩展响应缓冲区
         if (gen_var(req)->total_read + gen_var(bytes_read) > gen_var(req)->response_capacity) {
             size_t new_capacity = gen_var(req)->response_capacity ? gen_var(req)->response_capacity * 2 : 4096;
             while (new_capacity < gen_var(req)->total_read + gen_var(bytes_read)) {
                 new_capacity *= 2;
             }
-            
+
             char *new_data = realloc(gen_var(req)->response_data, new_capacity);
             if (!new_data) {
-                free(gen_var(req)->response_data);
                 gen_return((void*)(intptr_t)ANET_ERR);
             }
-            
+
             gen_var(req)->response_data = new_data;
             gen_var(req)->response_capacity = new_capacity;
         }
-        
+
         // 复制数据
         memcpy(gen_var(req)->response_data + gen_var(req)->total_read, gen_var(buffer), gen_var(bytes_read));
         gen_var(req)->total_read += gen_var(bytes_read);
-        
+
         // 检查是否读取完整
         if (gen_var(req)->total_read > 4 && strstr(gen_var(req)->response_data, "\r\n\r\n")) {
             const char *headers_end = strstr(gen_var(req)->response_data, "\r\n\r\n");
@@ -651,8 +648,6 @@ task_t* task_arg(anet_async_http_request_) {
                 if (gen_var(req)->total_read >= body_start + length) {
                     // 读取完成，解析响应
                     int result = parse_response(gen_var(req)->response_data, gen_var(req)->total_read, gen_var(req)->response, 1);
-                    free(gen_var(req)->response_data);
-                    gen_var(req)->response_data = NULL;
                     gen_return((void*)(intptr_t)(result == 0 ? ANET_OK : ANET_ERR));
                 }
             }
@@ -660,6 +655,26 @@ task_t* task_arg(anet_async_http_request_) {
     }
         // 继续读取
         // 不改变step，继续循环
+
+    gen_cleanup();
+    // 统一 teardown：无论哪个 gen_return 退出，gen_close 都会执行到这里一次。
+    if (gen_var(req)) {
+        free(gen_var(req)->request);
+        free(gen_var(req)->response_data);
+        // stream 只是持有 async_sock/async_ssl 指针的壳，先释放壳本身。
+        free(gen_var(req)->stream);
+        if (gen_var(req)->async_ssl) {
+            // async_ssl 拥有并释放它 attach 的 async_sock。
+            async_ssl_destroy(gen_var(req)->async_ssl);
+        } else if (gen_var(req)->async_sock) {
+            async_socket_close(gen_var(req)->async_sock);
+            free(gen_var(req)->async_sock);
+        } else if (anet_palsock_is_valid(gen_var(req)->sock)) {
+            anet_palsock_close(gen_var(req)->sock);
+        }
+        free(gen_var(req));
+        gen_var(req) = NULL;
+    }
     gen_end(NULL);
 }
 
