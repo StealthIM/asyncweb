@@ -7,7 +7,12 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <openssl/sha.h>
+#include <openssl/rand.h>
 #include "libcoro.h"
+
+// RFC6455 magic GUID appended to Sec-WebSocket-Key before hashing.
+#define WS_ACCEPT_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 /* ============================================================
  * 内部结构定义
@@ -64,10 +69,32 @@ static int base64_encode(const unsigned char* src, int len, char* out, int out_s
 
 static void generate_websocket_key(char out[64]) {
     unsigned char rand_bytes[16];
-    for (int i = 0; i < 16; i++) {
-        rand_bytes[i] = (unsigned char)(rand() & 0xFF);
+    if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1) {
+        // Fall back to a time-seeded PRNG if the CSPRNG is unavailable.
+        for (int i = 0; i < 16; i++)
+            rand_bytes[i] = (unsigned char)(rand() & 0xFF);
     }
     base64_encode(rand_bytes, 16, out, 64);
+}
+
+// 计算 RFC6455 期望的 Sec-WebSocket-Accept 值：base64(SHA1(key + GUID))。
+static void compute_ws_accept(const char *sec_key, char out[64]) {
+    char concat[128];
+    snprintf(concat, sizeof(concat), "%s%s", sec_key, WS_ACCEPT_GUID);
+    unsigned char digest[SHA_DIGEST_LENGTH];
+    SHA1((const unsigned char*)concat, strlen(concat), digest);
+    base64_encode(digest, SHA_DIGEST_LENGTH, out, 64);
+}
+
+// 在握手响应头缓冲中校验 Sec-WebSocket-Accept 是否与期望值匹配。
+static int ws_verify_accept(const char *headers, const char *sec_key) {
+    char expected[64];
+    compute_ws_accept(sec_key, expected);
+    const char *p = strcasestr(headers, "Sec-WebSocket-Accept:");
+    if (!p) return -1;
+    p += strlen("Sec-WebSocket-Accept:");
+    while (*p == ' ' || *p == '\t') p++;
+    return strncmp(p, expected, strlen(expected)) == 0 ? 0 : -1;
 }
 
 static int parse_url(const char* url, int* is_tls, char* host, int* port, char* path) {
@@ -219,7 +246,8 @@ anet_status_t anet_sync_ws_connect(const char *url, anet_sync_ws_t **ws_out) {
         return ANET_ERR;
     }
 
-    // 读取剩余头部
+    // 读取剩余头部，并校验 Sec-WebSocket-Accept
+    int accept_ok = 0;
     while (1) {
         int len = sync_stream_read_until(ws->stream, '\n', buf, sizeof(buf) - 1);
         if (len <= 0) {
@@ -233,8 +261,19 @@ anet_status_t anet_sync_ws_connect(const char *url, anet_sync_ws_t **ws_out) {
         if (strcmp(buf, "\r\n") == 0 || strcmp(buf, "\n") == 0) {
             break;
         }
+        if (strcasestr(buf, "Sec-WebSocket-Accept:") &&
+            ws_verify_accept(buf, ws->sec_key) == 0) {
+            accept_ok = 1;
+        }
     }
-    
+
+    if (!accept_ok) {
+        sync_stream_close(ws->stream);
+        free(ws);
+        anet_palsock_cleanup();
+        return ANET_ERR;
+    }
+
     ws->state = ANET_WS_OPEN;
     anet_palsock_cleanup();
     *ws_out = ws;
@@ -391,7 +430,8 @@ typedef struct {
     char sec_key[64];
     char req[1024];
     char buf[1024];
-    int ok;   /* set once ownership of stream/sock/ssl has passed to the ws object */
+    int ok;         /* set once ownership of stream/sock/ssl has passed to the ws object */
+    int accept_ok;  /* Sec-WebSocket-Accept validated */
 } async_ws_connect_internal_t;
 
 // 异步WebSocket连接协程
@@ -546,6 +586,14 @@ task_t* task_arg(anet_async_ws_connect_) {
         if (strcmp(gen_var(conn)->buf, "\r\n") == 0 || strcmp(gen_var(conn)->buf, "\n") == 0) {
             break;
         }
+        if (strcasestr(gen_var(conn)->buf, "Sec-WebSocket-Accept:") &&
+            ws_verify_accept(gen_var(conn)->buf, gen_var(ws)->sec_key) == 0) {
+            gen_var(conn)->accept_ok = 1;
+        }
+    }
+
+    if (!gen_var(conn)->accept_ok) {
+        gen_return((void*)(intptr_t)ANET_ERR);
     }
 
     // 成功：stream/async_sock/async_ssl 的所有权移交给 ws 对象。
