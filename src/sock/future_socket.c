@@ -37,13 +37,15 @@ static void async_io_cb(loop_t *loop,
 {
     async_op_ctx_t *ctx = (async_op_ctx_t*)userdata;
 
+    // ctx wraps the future; the future itself is owned by the awaiting task
+    // driver. Once we've signalled completion, ctx has done its job — free it.
     if (err != 0) {
         future_reject(ctx->future, (void*) err);
-        return;
+    } else {
+        // bytes 对 recv/send 都成立
+        future_done(ctx->future, (void*) bytes);
     }
-
-    // bytes 对 recv/send 都成立
-    future_done(ctx->future, (void*) bytes);
+    free(ctx);
 }
 
 
@@ -62,6 +64,7 @@ static void async_accept_cb(loop_t *loop,
 
     if (err != 0) {
         future_reject(ctx->future, (void*) err);
+        free(ctx);
         return;
     }
 
