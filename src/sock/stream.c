@@ -266,6 +266,55 @@ task_t *async_stream_write_all(async_stream_t *s,
 }
 
 /* ==============================
+ * write (single write)
+ * ============================== */
+
+task_t* task_arg(async_stream_write_) {
+    gen_dec_vars(
+        stream_write_arg_t arg_copy;
+        future_t *fut;
+        task_t *task;
+        ssize_t n;
+    );
+    gen_begin(ctx);
+
+    {
+        stream_write_arg_t *in = (stream_write_arg_t*)arg;
+        gen_var(arg_copy) = *in;
+        free(in);
+    }
+
+    if (gen_var(arg_copy.s)->ssl) {
+        gen_var(task) = async_ssl_write(gen_var(arg_copy.s)->ssl,
+                                        gen_var(arg_copy.buf),
+                                        gen_var(arg_copy.len));
+        gen_yield_from_task(gen_var(task));
+        gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(task)->future);
+    } else {
+        gen_var(fut) = async_socket_send(gen_var(arg_copy.s)->sock,
+                                         gen_var(arg_copy.buf),
+                                         gen_var(arg_copy.len));
+        gen_yield(gen_var(fut));
+        gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(fut));
+    }
+
+    gen_return((void*)(intptr_t)gen_var(n));
+    gen_end(NULL);
+}
+
+task_t *async_stream_write(async_stream_t *s,
+                           const void *buf,
+                           size_t len)
+{
+    stream_write_arg_t *a = malloc(sizeof(*a));
+    if (!a) return NULL;
+    a->s = s;
+    a->buf = buf;
+    a->len = len;
+    return async_stream_write_(a);
+}
+
+/* ==============================
  * read_until (delimiter)
  * ============================== */
 
