@@ -115,6 +115,18 @@ int anet_palsock_resolve(const char *hostname,
                      struct sockaddr_storage *out_addr,
                   int *out_len);
 
+// 异步 DNS 解析:把阻塞的 getaddrinfo offload 到 libcoro 线程池,
+// 返回一个 future,其 result 是一个堆分配的 anet_resolve_result_t*
+// (由调用方 free)。future 永远 resolve,失败时 result->ok != 0。
+typedef struct anet_resolve_result_s {
+    int ok;                          // 0 成功,-1 失败
+    struct sockaddr_storage addr;
+    int addr_len;
+} anet_resolve_result_t;
+
+struct future_s;
+struct future_s *anet_palsock_resolve_async(const char *hostname);
+
 
 // ============================================================
 // Socket 选项

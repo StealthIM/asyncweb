@@ -439,6 +439,7 @@ task_t* task_arg(anet_async_ws_connect_) {
     gen_dec_vars(
         async_ws_connect_internal_t *conn;
         future_t *fut;
+        future_t *resolve_fut;
         task_t *task;
         struct sockaddr_storage addr;
         int addr_len;
@@ -476,9 +477,21 @@ task_t* task_arg(anet_async_ws_connect_) {
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
-    // 步骤3: 解析地址
-    if (anet_palsock_resolve(gen_var(conn)->host, &gen_var(addr), &gen_var(addr_len)) != 0) {
+    // 步骤3: 异步解析地址 (阻塞 getaddrinfo offload 到线程池)
+    gen_var(resolve_fut) = anet_palsock_resolve_async(gen_var(conn)->host);
+    if (!gen_var(resolve_fut)) {
         gen_return((void*)(intptr_t)ANET_ERR);
+    }
+    gen_yield(gen_var(resolve_fut));
+    {
+        anet_resolve_result_t *r = (anet_resolve_result_t*)future_result(gen_var(resolve_fut));
+        if (!r || r->ok != 0) {
+            free(r);
+            gen_return((void*)(intptr_t)ANET_ERR);
+        }
+        gen_var(addr) = r->addr;
+        gen_var(addr_len) = r->addr_len;
+        free(r);
     }
 
     // 设置端口

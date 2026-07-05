@@ -484,7 +484,10 @@ task_t* task_arg(anet_async_http_request_) {
     gen_dec_vars(
         async_http_internal_t *req;
         future_t *fut;
+        future_t *resolve_fut;
         task_t *task;
+        struct sockaddr_storage addr;
+        int addr_len;
         char buffer[HTTP_BUFFER_SIZE];
         int bytes_read;
     );
@@ -520,18 +523,28 @@ task_t* task_arg(anet_async_http_request_) {
         gen_return((void*)(intptr_t)ANET_ERR);
     }
 
-    // 步骤2: 解析地址
-    struct sockaddr_storage addr;
-    int addr_len;
-    if (anet_palsock_resolve(gen_var(req)->host, &addr, &addr_len) != 0) {
+    // 步骤2: 异步解析地址 (阻塞 getaddrinfo offload 到线程池)
+    gen_var(resolve_fut) = anet_palsock_resolve_async(gen_var(req)->host);
+    if (!gen_var(resolve_fut)) {
         gen_return((void*)(intptr_t)ANET_ERR);
+    }
+    gen_yield(gen_var(resolve_fut));
+    {
+        anet_resolve_result_t *r = (anet_resolve_result_t*)future_result(gen_var(resolve_fut));
+        if (!r || r->ok != 0) {
+            free(r);
+            gen_return((void*)(intptr_t)ANET_ERR);
+        }
+        gen_var(addr) = r->addr;
+        gen_var(addr_len) = r->addr_len;
+        free(r);
     }
 
     // 设置端口
-    if (addr.ss_family == AF_INET) {
-        ((struct sockaddr_in*)&addr)->sin_port = htons(gen_var(req)->port);
-    } else if (addr.ss_family == AF_INET6) {
-        ((struct sockaddr_in6*)&addr)->sin6_port = htons(gen_var(req)->port);
+    if (gen_var(addr).ss_family == AF_INET) {
+        ((struct sockaddr_in*)&gen_var(addr))->sin_port = htons(gen_var(req)->port);
+    } else if (gen_var(addr).ss_family == AF_INET6) {
+        ((struct sockaddr_in6*)&gen_var(addr))->sin6_port = htons(gen_var(req)->port);
     }
 
     // 创建异步socket
@@ -541,7 +554,7 @@ task_t* task_arg(anet_async_http_request_) {
     }
 
     // 步骤3: 连接
-    gen_var(fut) = async_socket_connect(gen_var(req)->async_sock, (struct sockaddr*)&addr, addr_len);
+    gen_var(fut) = async_socket_connect(gen_var(req)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
     gen_yield(gen_var(fut));
     if (future_is_rejected(gen_var(fut))) {
         gen_return((void*)(intptr_t)ANET_ERR);

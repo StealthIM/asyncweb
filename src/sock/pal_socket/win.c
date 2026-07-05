@@ -1,4 +1,5 @@
 #include "../../include/private/sock/pal_socket.h"
+#include "libcoro.h"
 
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -158,6 +159,32 @@ int anet_palsock_resolve(const char *hostname,
 
     freeaddrinfo(res);
     return 0;
+}
+
+// 在 worker 线程执行的阻塞解析。arg 是 _strdup 的 hostname,worker 负责 free。
+static void *resolve_worker(void *arg)
+{
+    char *hostname = (char *)arg;
+    anet_resolve_result_t *r = calloc(1, sizeof(*r));
+    if (!r) { free(hostname); return NULL; }
+
+    if (anet_palsock_resolve(hostname, &r->addr, &r->addr_len) != 0) {
+        r->ok = -1;
+    } else {
+        r->ok = 0;
+    }
+    free(hostname);
+    return r;
+}
+
+struct future_s *anet_palsock_resolve_async(const char *hostname)
+{
+    if (!hostname) return NULL;
+    char *copy = _strdup(hostname);
+    if (!copy) return NULL;
+    struct future_s *fut = loop_run_in_thread(resolve_worker, copy);
+    if (!fut) { free(copy); return NULL; }
+    return fut;
 }
 
 
