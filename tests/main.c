@@ -10,6 +10,7 @@ int test_server();
 int test_server6();
 int test_http_server();
 int test_https_server();
+int test_keepalive();
 int test_ws_server();
 
 int main(int argc, char** argv) {
@@ -43,11 +44,14 @@ int main(int argc, char** argv) {
     if (strcmp(argv[1], "https_server") == 0) {
         return test_https_server();
     }
+    if (strcmp(argv[1], "keepalive") == 0) {
+        return test_keepalive();
+    }
     if (strcmp(argv[1], "ws_server") == 0) {
         return test_ws_server();
     }
 
     printf("Unknown test: %s\n", argv[1]);
-    printf("Available tests: sync_http, async_http, sync_ws, async_ws, server, server6, http_server, https_server, ws_server\n");
+    printf("Available tests: sync_http, async_http, sync_ws, async_ws, server, server6, http_server, https_server, keepalive, ws_server\n");
     return 1;
 }

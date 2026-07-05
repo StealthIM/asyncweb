@@ -17,8 +17,8 @@ extern "C" {
  *   - 每连接一个协程:读请求行+头部+body、调 handler、写响应、关闭
  *
  * 支持明文 HTTP 与 HTTPS (见 anet_http_server_use_tls)。
- * 当前限制:单次请求/响应后关闭连接 (Connection: close 语义);
- * 请求缓冲固定上限。
+ * 支持 HTTP/1.1 keep-alive:同一连接上串行处理多个请求,直到对端发
+ * Connection: close、HTTP/1.0 无 keep-alive、或服务器 stop。请求缓冲固定上限。
  * ============================================================ */
 
 // 服务端收到的请求 (指针在 handler 调用期间有效)
