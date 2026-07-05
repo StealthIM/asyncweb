@@ -1,10 +1,11 @@
-#include "pal_socket.h"
+#include "sock/pal_socket.h"
 
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <netinet/tcp.h>
 
 // ======================
 // 错误码转换
@@ -14,7 +15,9 @@ anet_palsock_err_t anet_palsock_translate_error(int e)
 {
     switch (e) {
         case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
         case EWOULDBLOCK:
+#endif
             return PALSOCK_ERR_AGAIN;
         case ECONNRESET:
             return PALSOCK_ERR_CONN_RESET;
@@ -42,8 +45,9 @@ void anet_palsock_cleanup() {}
 // 基础操作
 // ======================
 
-anet_palsock_t anet_palsock_create(int af, int type, int protocol)
+anet_palsock_t anet_palsock_create(int af, int type, int protocol, int async)
 {
+    (void)async;
     return socket(af, type, protocol);
 }
 
@@ -148,8 +152,11 @@ int anet_palsock_resolve(const char *hostname,
                      struct sockaddr_storage *out_addr,
                      int *out_len)
 {
+    // Sockets are created as AF_INET throughout, so resolve to IPv4 only —
+    // otherwise an AF_UNSPEC result may hand back an IPv6 address that a
+    // AF_INET socket cannot connect to.
     struct addrinfo hints = {0};
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res;

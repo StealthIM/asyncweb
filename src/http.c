@@ -444,9 +444,9 @@ anet_status_t anet_sync_http_post(const char *url, const char *content_type, con
     if (parse_url(url, &parsed) != 0) return ANET_ERR;
     
     const char *headers[4] = { "User-Agent: asyncweb/0.1", NULL, NULL, NULL };
-    
+    char ct_header[256];
+
     if (content_type) {
-        char ct_header[256];
         snprintf(ct_header, sizeof(ct_header), "Content-Type: %s", content_type);
         headers[1] = ct_header;
     }
@@ -670,6 +670,7 @@ task_t* task_arg(anet_async_http_get_) {
         anet_async_http_response_t *response;
         parsed_url_t parsed;
         anet_async_http_request_t req;
+        const char *headers[3];
         task_t *task;
     );
     gen_begin(ctx);
@@ -680,18 +681,20 @@ task_t* task_arg(anet_async_http_get_) {
         gen_var(url) = (const char*)args[0];
         gen_var(response) = (anet_async_http_response_t*)args[1];
         free(args);
-        
+
         if (parse_url(gen_var(url), &gen_var(parsed)) != 0) {
             gen_return((void*)(intptr_t)ANET_ERR);
         }
-        
-        // 准备请求参数
-        const char *headers[] = { "User-Agent: asyncweb/0.1", "Accept: */*", NULL };
+
+        // 准备请求参数（headers 存于协程持久存储，跨 yield 有效）
+        gen_var(headers)[0] = "User-Agent: asyncweb/0.1";
+        gen_var(headers)[1] = "Accept: */*";
+        gen_var(headers)[2] = NULL;
         gen_var(req).method = "GET";
         gen_var(req).host = gen_var(parsed).host;
         gen_var(req).port = gen_var(parsed).port;
         gen_var(req).path = gen_var(parsed).path;
-        gen_var(req).headers = headers;
+        gen_var(req).headers = gen_var(headers);
         gen_var(req).body = NULL;
         gen_var(req).response = gen_var(response);
     }

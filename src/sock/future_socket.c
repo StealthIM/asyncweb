@@ -116,6 +116,8 @@ future_t* async_socket_recv(async_socket_t *s,
     async_op_ctx_t *ctx = calloc(1, sizeof(*ctx));
     ctx->future = future_create();
 
+    future_t *fut = ctx->future;
+
     loop_op_id_t id = loop_post_recv(
         (void*)s->sock,
         (char*)buf,
@@ -125,11 +127,11 @@ future_t* async_socket_recv(async_socket_t *s,
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(ctx->future, (void*) -1);
+        future_reject(fut, (void*) -1);
         free(ctx);
     }
 
-    return ctx->future;
+    return fut;
 }
 
 future_t* async_socket_send(async_socket_t *s,
@@ -138,6 +140,8 @@ future_t* async_socket_send(async_socket_t *s,
 {
     async_op_ctx_t *ctx = calloc(1, sizeof(*ctx));
     ctx->future = future_create();
+
+    future_t *fut = ctx->future;
 
     loop_op_id_t id = loop_post_send(
         (void*)s->sock,
@@ -148,11 +152,11 @@ future_t* async_socket_send(async_socket_t *s,
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(ctx->future, (void*) -1);
+        future_reject(fut, (void*) -1);
         free(ctx);
     }
 
-    return ctx->future;
+    return fut;
 }
 
 future_t* async_socket_connect(async_socket_t *s,
@@ -161,6 +165,8 @@ future_t* async_socket_connect(async_socket_t *s,
 {
     async_op_ctx_t *ctx = calloc(1, sizeof(*ctx));
     ctx->future = future_create();
+
+    future_t *fut = ctx->future;
 
     loop_op_id_t id = loop_connect_async(
         (void*)s->sock,
@@ -171,11 +177,11 @@ future_t* async_socket_connect(async_socket_t *s,
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(ctx->future, (void*) -1);
+        future_reject(fut, (void*) -1);
         free(ctx);
     }
 
-    return ctx->future;
+    return fut;
 }
 
 
@@ -216,6 +222,8 @@ future_t* async_socket_accept(async_listener_t *listener)
 
     ctx->extra = client;
 
+    future_t *fut = ctx->future;
+
     loop_op_id_t id = loop_accept_async(
         (void*)listener->sock,
         (void**)&client->sock,
@@ -224,10 +232,10 @@ future_t* async_socket_accept(async_listener_t *listener)
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(ctx->future, (void*) -1);
+        future_reject(fut, (void*) -1);
         free(client);
         free(ctx);
     }
 
-    return ctx->future;
+    return fut;
 }
