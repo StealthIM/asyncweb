@@ -749,14 +749,14 @@ task_t* task_arg(anet_async_ws_send_) {
     
     gen_var(task) = async_stream_write_all(gen_var(send)->ws->stream, gen_var(frame), gen_var(hlen) + gen_var(send)->len);
     gen_yield_from_task(gen_var(task));
-    
+
     free(gen_var(frame));
     free(gen_var(send));
-    
+
     if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
         gen_return(anet_res_status(ANET_ERR));
     }
-    
+
     gen_return(anet_res_status(ANET_OK));
     gen_end(NULL);
 }
@@ -819,7 +819,7 @@ task_t* task_arg(anet_async_ws_recv_) {
     // 步骤1: 读取帧头
     gen_var(task) = async_stream_read_exactly(gen_var(recv)->ws->stream, 2, gen_var(recv)->hdr);
     gen_yield_from_task(gen_var(task));
-    
+
     if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
         free(gen_var(recv));
         gen_return(anet_res_status(ANET_ERR));
@@ -994,7 +994,12 @@ void anet_async_ws_destroy(anet_async_ws_t *ws) {
 typedef struct {
     async_socket_t   *sock;
     anet_async_ws_t **ws_out;
+    int               tls;
+    const char       *cert_path;
+    const char       *key_path;
     /* 内部状态 */
+    async_ssl_t      *ssl;       /* wss 时的 TLS 会话 (attach 后拥有 sock) */
+    async_stream_t   *stream;    /* 包裹 sock 或 ssl,握手请求经此读写 */
     char             *buf;       /* 累积的请求字节 */
     size_t            buf_len;
     size_t            buf_cap;
@@ -1008,7 +1013,6 @@ typedef struct {
 task_t* task_arg(anet_async_ws_accept_) {
     gen_dec_vars(
         ws_accept_internal_t *a;
-        future_t             *fut;
         task_t               *task;
         anet_async_ws_t      *ws;
         char                  chunk[1024];
@@ -1022,14 +1026,38 @@ task_t* task_arg(anet_async_ws_accept_) {
         if (!gen_var(a)) { free(in); gen_return(anet_res_status(ANET_ERR)); }
         gen_var(a)->sock = in->sock;
         gen_var(a)->ws_out = in->ws_out;
+        gen_var(a)->tls = in->tls;
+        gen_var(a)->cert_path = in->cert_path;
+        gen_var(a)->key_path = in->key_path;
         free(in);
     }
 
+    /* 步骤0: 建立 stream。wss 先做服务端 TLS 握手,再包 ssl;否则包裸 socket。
+       建 stream 后 sock 的所有权归 stream (TLS 时经 ssl) —— 成功/失败都由
+       cleanup 里的 async_stream_destroy 统一收尾,与明文早期失败区分见下。 */
+    if (gen_var(a)->tls) {
+        gen_var(a)->ssl = async_ssl_create_server(gen_var(a)->cert_path, gen_var(a)->key_path);
+        if (!gen_var(a)->ssl) { gen_return(anet_res_status(ANET_ERR)); }
+        async_ssl_attach_socket(gen_var(a)->ssl, gen_var(a)->sock);
+        gen_var(task) = async_ssl_handshake(gen_var(a)->ssl);
+        gen_yield_from_task(gen_var(task));
+        if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        gen_var(a)->stream = async_stream_from_ssl(gen_var(a)->ssl);
+        /* ssl 所有权移入 stream;清空 a->ssl,避免 cleanup 二次销毁。
+           (stream 创建失败时 a->ssl 仍非空,由 cleanup 的 ssl 分支收。) */
+        if (gen_var(a)->stream) { gen_var(a)->ssl = NULL; }
+    } else {
+        gen_var(a)->stream = async_stream_from_socket(gen_var(a)->sock);
+    }
+    if (!gen_var(a)->stream) { gen_return(anet_res_status(ANET_ERR)); }
+
     /* 步骤1: 读到完整请求头 (\r\n\r\n) */
     while (1) {
-        gen_var(fut) = async_socket_recv(gen_var(a)->sock, gen_var(chunk), sizeof(gen_var(chunk)));
-        gen_yield(gen_var(fut));
-        gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
+        gen_var(task) = async_stream_read(gen_var(a)->stream, sizeof(gen_var(chunk)), gen_var(chunk));
+        gen_yield_from_task(gen_var(task));
+        gen_var(n) = (int)anet_code_of(future_result(gen_var(task)->future));
         if (gen_var(n) <= 0) { gen_return(anet_res_status(ANET_ERR)); }
 
         if (gen_var(a)->buf_len + gen_var(n) + 1 > gen_var(a)->buf_cap) {
@@ -1069,33 +1097,45 @@ task_t* task_arg(anet_async_ws_accept_) {
 
         gen_var(ws) = calloc(1, sizeof(*gen_var(ws)));
         if (!gen_var(ws)) { gen_return(anet_res_status(ANET_ERR)); }
-        gen_var(ws)->stream = async_stream_from_socket(gen_var(a)->sock);
-        if (!gen_var(ws)->stream) { free(gen_var(ws)); gen_var(ws) = NULL; gen_return(anet_res_status(ANET_ERR)); }
+        gen_var(ws)->stream = gen_var(a)->stream;
         gen_var(ws)->state = ANET_WS_OPEN;
         gen_var(ws)->is_server = 1;
-        gen_var(ws)->is_tls = 0;
+        gen_var(ws)->is_tls = gen_var(a)->tls;
 
         gen_var(task) = async_stream_write_all(gen_var(ws)->stream, gen_var(a)->resp, (size_t)rn);
         gen_yield_from_task(gen_var(task));
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
-            /* 写失败:stream 壳已建,cleanup 里连 ws 一起收 */
+            /* 写失败:ws 已接管 stream 所有权,置回 a->stream=NULL 交给下面
+               的 ws 分支统一收 (destroy stream 连带 ssl/sock)。 */
+            gen_var(a)->stream = NULL;
             gen_return(anet_res_status(ANET_ERR));
         }
     }
 
+    /* 成功:stream 所有权转交 ws,再转交调用方。 */
+    gen_var(a)->stream = NULL;
     *gen_var(a)->ws_out = gen_var(ws);
-    gen_var(ws) = NULL;   /* 所有权转交调用方,cleanup 不再释放 */
+    gen_var(ws) = NULL;
     gen_return(anet_res_status(ANET_OK));
 
     gen_cleanup();
     if (gen_var(ws)) {
-        /* 失败路径:stream 只是壳,底层 sock 归调用方(HTTP server 连接协程)管,
-           这里只释放 stream 壳和 ws 本身,不关 sock。 */
-        free(gen_var(ws)->stream);
+        /* 写 101 失败:ws 已持有 stream,销毁它 (连带 ssl/sock)。 */
+        async_stream_destroy(gen_var(ws)->stream);
         free(gen_var(ws));
         gen_var(ws) = NULL;
     }
     if (gen_var(a)) {
+        /* stream 仍在 a 手里 (握手/读头/校验阶段失败):
+           - stream 已建:destroy 之 (连带 ssl→sock,或直接 sock)。
+           - stream 未建但 ssl 已建 (TLS 握手失败):destroy ssl (连带 sock)。
+           - 都没建 (calloc 失败等极早期):sock 归调用方,不动。
+           stream 已转交 ws/调用方时 a->stream 已置 NULL,这里不重复释放。 */
+        if (gen_var(a)->stream) {
+            async_stream_destroy(gen_var(a)->stream);
+        } else if (gen_var(a)->ssl) {
+            async_ssl_destroy(gen_var(a)->ssl);
+        }
         free(gen_var(a)->buf);
         free(gen_var(a)->resp);
         free(gen_var(a));
@@ -1106,9 +1146,24 @@ task_t* task_arg(anet_async_ws_accept_) {
 
 task_t* anet_async_ws_accept(async_socket_t *sock, anet_async_ws_t **ws_out) {
     if (!sock || !ws_out) return NULL;
-    anet_async_ws_accept_t *req = malloc(sizeof(*req));
+    anet_async_ws_accept_t *req = calloc(1, sizeof(*req));
     if (!req) return NULL;
     req->sock = sock;
     req->ws_out = ws_out;
+    return anet_async_ws_accept_(req);
+}
+
+task_t* anet_async_ws_accept_tls(async_socket_t *sock,
+                                 const char *cert_path,
+                                 const char *key_path,
+                                 anet_async_ws_t **ws_out) {
+    if (!sock || !ws_out || !cert_path || !key_path) return NULL;
+    anet_async_ws_accept_t *req = calloc(1, sizeof(*req));
+    if (!req) return NULL;
+    req->sock = sock;
+    req->ws_out = ws_out;
+    req->tls = 1;
+    req->cert_path = cert_path;
+    req->key_path = key_path;
     return anet_async_ws_accept_(req);
 }

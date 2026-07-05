@@ -118,6 +118,7 @@ if(ASYNCWEB_STANDALONE)
             tests/test_https_server.c
             tests/test_keepalive.c
             tests/test_ws_server.c
+            tests/test_wss_server.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
     # keep-alive 测试需要低层 async socket/stream API 建可复用连接
@@ -132,4 +133,5 @@ if(ASYNCWEB_STANDALONE)
     add_test_with_dir(test_https_server test_asyncweb https_server)
     add_test_with_dir(test_keepalive test_asyncweb keepalive)
     add_test_with_dir(test_ws_server test_asyncweb ws_server)
+    add_test_with_dir(test_wss_server test_asyncweb wss_server)
 endif()

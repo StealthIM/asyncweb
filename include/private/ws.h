@@ -85,13 +85,25 @@ void anet_async_ws_destroy(anet_async_ws_t *ws);
 typedef struct {
     async_socket_t   *sock;      // 传入的已 accept socket
     anet_async_ws_t **ws_out;    // 成功时写入服务端 WS 连接
+    int               tls;       // 非 0:先做服务端 TLS 握手 (wss)
+    const char       *cert_path; // tls 时的 PEM 证书链路径
+    const char       *key_path;  // tls 时的 PEM 私钥路径
 } anet_async_ws_accept_t;
 
 // 在一条已 accept 的 async socket 上完成服务端 WS 握手:
 // 读取 Upgrade 请求头、校验 Sec-WebSocket-Key、回 101 响应,
 // 成功后 *ws_out 得到 is_server 模式的连接 (send 不加掩码)。
 // future result: ANET_OK / ANET_ERR。
+// 所有权:task 接管 sock —— 成功时转交给 *ws_out (经其 stream),
+// 失败时由 task 自行关闭释放。调用方在调用后不应再 close/free sock。
 task_t* anet_async_ws_accept(async_socket_t *sock, anet_async_ws_t **ws_out);
+
+// 同 anet_async_ws_accept,但先在 sock 上完成服务端 TLS 握手 (wss)。
+// cert_path/key_path 为 PEM 文件路径,须在握手前有效。
+task_t* anet_async_ws_accept_tls(async_socket_t *sock,
+                                 const char *cert_path,
+                                 const char *key_path,
+                                 anet_async_ws_t **ws_out);
 
 /* ============================================================
  * 同步WebSocket接口
