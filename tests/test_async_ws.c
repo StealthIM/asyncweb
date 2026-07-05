@@ -49,6 +49,8 @@ task_t* task(async_ws_test_task) {
         exit(1);
         gen_return(1);
     }
+    printf("Received text message: %s\n", gen_var(msg).data);
+    anet_ws_message_free(&gen_var(msg));
 
     // 发送文本消息
     gen_var(task) = anet_async_ws_send(gen_var(ws), ANET_WS_TEXT, gen_var(ws_msg), strlen(gen_var(ws_msg)));
