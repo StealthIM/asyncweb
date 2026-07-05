@@ -18,8 +18,8 @@
 
 static uint16_t bound_port(anet_palsock_t s) {
     struct sockaddr_in sin;
-    socklen_t len = sizeof(sin);
-    if (getsockname(s, (struct sockaddr*)&sin, &len) != 0) return 0;
+    int len = sizeof(sin);
+    if (anet_palsock_getsockname(s, (struct sockaddr*)&sin, &len) != 0) return 0;
     return ntohs(sin.sin_port);
 }
 

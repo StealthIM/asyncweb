@@ -7,8 +7,8 @@ set(CMAKE_C_STANDARD 11)
 # Option
 option(ASYNCWEB_STANDALONE "Build asyncweb standalone" OFF)
 
-set(ASYNCWEB_OS_BACKEND "" CACHE STRING "Choose OS backend: posix, win")
-set_property(CACHE ASYNCWEB_OS_BACKEND PROPERTY STRINGS posix win)
+set(ASYNCWEB_OS_BACKEND "" CACHE STRING "Choose OS backend: posix, win, lwip")
+set_property(CACHE ASYNCWEB_OS_BACKEND PROPERTY STRINGS posix win lwip)
 
 set(ASYNCWEB_SSL_BACKEND "" CACHE STRING "Choose SSL backend: openssl, wolfssl")
 set_property(CACHE ASYNCWEB_SSL_BACKEND PROPERTY STRINGS openssl wolfssl)
@@ -59,6 +59,13 @@ elseif(ASYNCWEB_OS_BACKEND STREQUAL "win")
             src/sock/pal_socket/win.c
     )
     target_link_libraries(asyncweb PRIVATE ws2_32 crypt32)
+elseif(ASYNCWEB_OS_BACKEND STREQUAL "lwip")
+    # lwIP 后端: socket PAL 走 lwip_ 前缀。lwIP 库本身由 libcoro 的 lwip
+    # 后端 (LIBCORO_OS_BACKEND=lwip) 通过 lwip_backend 目标 PUBLIC 提供,
+    # 所以 asyncweb 只要链 libcoro 就能拿到 lwip 头和符号 (含 LIBCORO_LWIP 宏)。
+    list(APPEND SRC_FILES
+            src/sock/pal_socket/lwip.c
+    )
 else()
     message(FATAL_ERROR "No valid OS backend selected.")
 endif()

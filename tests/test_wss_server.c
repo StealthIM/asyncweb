@@ -144,8 +144,8 @@ int test_wss_server() {
             printf("bind failed\n"); return 1;
         }
         if (anet_palsock_listen(g_listen_sock, 4) != 0) { printf("listen failed\n"); return 1; }
-        struct sockaddr_in bound; socklen_t bl = sizeof(bound);
-        getsockname(g_listen_sock, (struct sockaddr*)&bound, &bl);
+        struct sockaddr_in bound; int bl = sizeof(bound);
+        anet_palsock_getsockname(g_listen_sock, (struct sockaddr*)&bound, &bl);
         g_port = ntohs(bound.sin_port);
     }
     g_listener = async_listener_create(g_listen_sock);

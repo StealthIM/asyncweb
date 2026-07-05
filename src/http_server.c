@@ -384,9 +384,9 @@ anet_http_server_t* anet_http_server_create(uint16_t port,
 
     /* 取实际端口 (port==0 时为临时端口) */
     struct sockaddr_in bound;
-    socklen_t blen = sizeof(bound);
+    int blen = sizeof(bound);
     uint16_t actual = port;
-    if (getsockname(s, (struct sockaddr*)&bound, &blen) == 0) {
+    if (anet_palsock_getsockname(s, (struct sockaddr*)&bound, &blen) == 0) {
         actual = ntohs(bound.sin_port);
     }
 

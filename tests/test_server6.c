@@ -15,8 +15,8 @@
 
 static uint16_t bound_port6(anet_palsock_t s) {
     struct sockaddr_in6 sin6;
-    socklen_t len = sizeof(sin6);
-    if (getsockname(s, (struct sockaddr*)&sin6, &len) != 0) return 0;
+    int len = sizeof(sin6);
+    if (anet_palsock_getsockname(s, (struct sockaddr*)&sin6, &len) != 0) return 0;
     return ntohs(sin6.sin6_port);
 }
 
@@ -44,7 +44,8 @@ task_t* task(server6_test_task) {
         struct sockaddr_in6 sin6;
         memset(&sin6, 0, sizeof(sin6));
         sin6.sin6_family = AF_INET6;
-        sin6.sin6_addr = in6addr_loopback;   /* ::1 */
+        struct in6_addr lo6 = IN6ADDR_LOOPBACK_INIT;   /* ::1 */
+        sin6.sin6_addr = lo6;
         sin6.sin6_port = 0;
         if (anet_palsock_bind(gen_var(listen_sock), (struct sockaddr*)&sin6, sizeof(sin6)) != 0) {
             printf("v6 bind failed\n"); exit(1);
@@ -67,7 +68,8 @@ task_t* task(server6_test_task) {
         struct sockaddr_in6 sin6;
         memset(&sin6, 0, sizeof(sin6));
         sin6.sin6_family = AF_INET6;
-        sin6.sin6_addr = in6addr_loopback;
+        struct in6_addr lo6 = IN6ADDR_LOOPBACK_INIT;
+        sin6.sin6_addr = lo6;
         sin6.sin6_port = htons(gen_var(port));
         gen_var(connect_fut) = async_socket_connect(gen_var(client), (struct sockaddr*)&sin6, sizeof(sin6));
     }

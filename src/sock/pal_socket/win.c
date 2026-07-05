@@ -91,6 +91,11 @@ anet_palsock_t anet_palsock_accept(anet_palsock_t s, struct sockaddr *addr, int 
     return accept(s, addr, addrlen);
 }
 
+int anet_palsock_getsockname(anet_palsock_t s, struct sockaddr *addr, int *addrlen)
+{
+    return getsockname(s, addr, addrlen);
+}
+
 
 // ======================
 // send/recv

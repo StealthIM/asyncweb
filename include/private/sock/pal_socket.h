@@ -11,7 +11,14 @@ extern "C" {
 // 平台判断
 // ============================================================
 
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(LIBCORO_LWIP)
+    // lwIP 后端: socket/sockaddr 全部用 lwIP 的定义 (与系统 socket 是两个
+    // 命名空间, struct sockaddr 布局也不同, 不能混)。fd 是 lwip_socket 返回的 int。
+    #include "lwip/sockets.h"
+    #include "lwip/inet.h"
+    #include "lwip/netdb.h"
+    typedef int anet_palsock_t;
+#elif defined(_WIN32) || defined(_WIN64)
     #include <winsock2.h>
     #include <ws2tcpip.h>
     typedef SOCKET anet_palsock_t;
@@ -87,6 +94,9 @@ int anet_palsock_listen(anet_palsock_t s, int backlog);
 
 // accept（返回新的 anet_palsock_t）
 anet_palsock_t anet_palsock_accept(anet_palsock_t s, struct sockaddr *addr, int *addrlen);
+
+// 取 socket 本地绑定地址（port==0 时查内核选的临时端口）。成功返回 0。
+int anet_palsock_getsockname(anet_palsock_t s, struct sockaddr *addr, int *addrlen);
 
 
 // ============================================================
