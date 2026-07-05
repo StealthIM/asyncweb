@@ -7,6 +7,7 @@ int test_async_http();
 int test_sync_ws();
 int test_async_ws();
 int test_server();
+int test_http_server();
 
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -30,8 +31,11 @@ int main(int argc, char** argv) {
     if (strcmp(argv[1], "server") == 0) {
         return test_server();
     }
+    if (strcmp(argv[1], "http_server") == 0) {
+        return test_http_server();
+    }
 
     printf("Unknown test: %s\n", argv[1]);
-    printf("Available tests: sync_http, async_http, sync_ws, async_ws, server\n");
+    printf("Available tests: sync_http, async_http, sync_ws, async_ws, server, http_server\n");
     return 1;
 }
