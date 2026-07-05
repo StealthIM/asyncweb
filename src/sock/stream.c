@@ -108,14 +108,14 @@ task_t* task_arg(async_stream_read_exactly_) {
         gen_var(task) = async_stream_read(gen_var(arg_copy).s, 1, gen_var(arg_copy).buf + gen_var(total_read));
         gen_yield_from_task(gen_var(task));
 
-        int result = (int)future_result(gen_var(task)->future);
+        int result = (int)anet_code_of(future_result(gen_var(task)->future));
         if (result <= 0) {
-            gen_return(-1);
+            gen_return(anet_res_code(-1));
         }
         gen_var(total_read) += result;
     }
 
-    gen_return(0);
+    gen_return(anet_res_code(0));
     gen_end(NULL);
 }
 
@@ -166,25 +166,25 @@ task_t* task_arg(async_stream_read_) {
                to_copy);
         gen_var(arg_copy.s)->read_buf_off += to_copy;
         
-        gen_return((void*)(intptr_t)to_copy);
+        gen_return(anet_res_code((intptr_t)to_copy));
     }
 
     // 没有缓冲数据，直接从socket读取
     if (gen_var(arg_copy.s)->ssl) {
         gen_var(task) = async_ssl_read(gen_var(arg_copy.s)->ssl, gen_var(arg_copy.buf), gen_var(arg_copy.max_len));
         gen_yield_from_task(gen_var(task));
-        gen_var(n) = (int)(intptr_t)future_result(gen_var(task)->future);
+        gen_var(n) = (int)anet_code_of(future_result(gen_var(task)->future));
     } else {
         gen_var(fut) = async_socket_recv(gen_var(arg_copy.s)->sock, gen_var(arg_copy.buf), gen_var(arg_copy.max_len));
         gen_yield(gen_var(fut));
-        gen_var(n) = (int)(intptr_t)future_result(gen_var(fut));
+        gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
     }
 
     if (gen_var(n) <= 0) {
-        gen_return((void*)-1);
+        gen_return(anet_res_code(-1));
     }
 
-    gen_end((void*)(intptr_t)gen_var(n));
+    gen_end(anet_res_code((intptr_t)gen_var(n)));
 }
 
 task_t *async_stream_read(async_stream_t *s, size_t max_len, void *buf)
@@ -233,23 +233,23 @@ task_t* task_arg(async_stream_write_all_) {
                                            (uint8_t*)gen_var(arg_copy.buf) + gen_var(off),
                                            remain);
             gen_yield_from_task(gen_var(task));
-            gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(task)->future);
+            gen_var(n) = (ssize_t)anet_code_of(future_result(gen_var(task)->future));
         } else {
             gen_var(fut) = async_socket_send(gen_var(arg_copy.s)->sock,
                                              (uint8_t*)gen_var(arg_copy.buf) + gen_var(off),
                                              remain);
             gen_yield(gen_var(fut));
-            gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(fut));
+            gen_var(n) = (ssize_t)anet_code_of(future_result(gen_var(fut)));
         }
 
 
         if (gen_var(n) <= 0) {
-            gen_return((void*)(intptr_t)-1);
+            gen_return(anet_res_code(-1));
         }
         gen_var(off) += (size_t)gen_var(n);
     }
 
-    gen_return((void*)0);
+    gen_return(anet_res_code(0));
     gen_end(NULL);
 }
 
@@ -289,16 +289,16 @@ task_t* task_arg(async_stream_write_) {
                                         gen_var(arg_copy.buf),
                                         gen_var(arg_copy.len));
         gen_yield_from_task(gen_var(task));
-        gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(task)->future);
+        gen_var(n) = (ssize_t)anet_code_of(future_result(gen_var(task)->future));
     } else {
         gen_var(fut) = async_socket_send(gen_var(arg_copy.s)->sock,
                                          gen_var(arg_copy.buf),
                                          gen_var(arg_copy.len));
         gen_yield(gen_var(fut));
-        gen_var(n) = (ssize_t)(intptr_t)future_result(gen_var(fut));
+        gen_var(n) = (ssize_t)anet_code_of(future_result(gen_var(fut)));
     }
 
-    gen_return((void*)(intptr_t)gen_var(n));
+    gen_return(anet_res_code((intptr_t)gen_var(n)));
     gen_end(NULL);
 }
 
@@ -346,10 +346,10 @@ task_t* task_arg(async_stream_read_until_) {
         gen_var(task) = async_stream_read(gen_var(arg_copy).s, 1, &gen_var(byte));
         gen_yield_from_task(gen_var(task));
 
-        int result = (int)future_result(gen_var(task)->future);
+        int result = (int)anet_code_of(future_result(gen_var(task)->future));
         if (result <= 0) {
             if (gen_var(total_read) == 0) {
-                gen_return(-1);
+                gen_return(anet_res_code(-1));
             }
             break;
         }
@@ -361,7 +361,7 @@ task_t* task_arg(async_stream_read_until_) {
 
     // 添加 null 终止符
     ((uint8_t*)gen_var(arg_copy).buf)[gen_var(total_read)] = '\0';
-    gen_return((void*)(intptr_t)gen_var(total_read));
+    gen_return(anet_res_code((intptr_t)gen_var(total_read)));
     gen_end(NULL);
 }
 

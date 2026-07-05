@@ -81,15 +81,15 @@ task_t *task_arg(async_flush_wbio) {
     for (;;) {
         int pending = BIO_pending(gen_var(ssl)->wbio);
         if (pending <= 0) {
-            gen_return(0);
+            gen_return(anet_res_code(0));
         }
 
         gen_var(n) = BIO_read(gen_var(ssl)->wbio, gen_var(buf), sizeof(gen_var(buf)));
         if (gen_var(n) < 0) {
-            gen_return(-1);
+            gen_return(anet_res_code(-1));
         }
         if (gen_var(n) == 0) {
-            gen_return(0);
+            gen_return(anet_res_code(0));
         }
 
         gen_var(off) = 0;
@@ -99,15 +99,15 @@ task_t *task_arg(async_flush_wbio) {
                 gen_var(buf) + gen_var(off), gen_var(n) - gen_var(off)
             );
             gen_yield(gen_var(fut));
-            gen_var(s) = (int)future_result(gen_var(fut));
+            gen_var(s) = (int)anet_code_of(future_result(gen_var(fut)));
             if (gen_var(s) <= 0) {
-                gen_return(-1);
+                gen_return(anet_res_code(-1));
             }
             gen_var(off) += gen_var(s);
         }
     }
 
-    gen_end(0);
+    gen_end(anet_res_code(0));
 }
 
 task_t* task_arg(async_feed_rbio) {
@@ -126,19 +126,19 @@ task_t* task_arg(async_feed_rbio) {
         gen_var(buf), sizeof(gen_var(buf))
     );
     gen_yield(gen_var(fut));
-    gen_var(n) = (int)future_result(gen_var(fut));
+    gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
 
     if (gen_var(n) > 0) {
         int ret = bio_write_all(gen_var(ssl)->rbio, gen_var(buf), gen_var(n));
-        gen_return(ret);
+        gen_return(anet_res_code(ret));
     }
 
     if (gen_var(n) == 0) {
         BIO_set_mem_eof_return(gen_var(ssl)->rbio, 0);
-        gen_return(0);
+        gen_return(anet_res_code(0));
     }
 
-    gen_end(-1);
+    gen_end(anet_res_code(-1));
 }
 
 /* ------------------------------------------------------------
@@ -199,7 +199,7 @@ task_t* task_arg(async_ssl_handshake_) {
     while (1) {
         int r = SSL_do_handshake(gen_var(ssl)->ssl);
         if (r == 1) {
-            gen_return((void*)0);
+            gen_return(anet_res_code(0));
         }
 
         gen_var(err) = SSL_get_error(gen_var(ssl)->ssl, r);
@@ -207,8 +207,8 @@ task_t* task_arg(async_ssl_handshake_) {
         gen_var(task) = async_flush_wbio(gen_var(ssl));
         gen_yield_from_task(gen_var(task));
 
-        if (future_result(gen_var(task)->future) < 0) {
-            gen_return(-1);
+        if (anet_code_of(future_result(gen_var(task)->future)) < 0) {
+            gen_return(anet_res_code(-1));
         }
 
         if (gen_var(err) == SSL_ERROR_WANT_WRITE) {
@@ -219,13 +219,13 @@ task_t* task_arg(async_ssl_handshake_) {
             gen_var(task) = async_feed_rbio(gen_var(ssl));
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) <= 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) <= 0) {
+                gen_return(anet_res_code(-1));
             }
             continue;
         }
 
-        gen_return((void*)(intptr_t)-1);
+        gen_return(anet_res_code(-1));
     }
 
     // Unreachable
@@ -262,7 +262,7 @@ task_t* task_arg(async_ssl_read_) {
                          gen_var(a).buf,
                          (int)gen_var(a).len);
         if (n > 0) {
-            gen_return((void*)(intptr_t)n);
+            gen_return(anet_res_code(n));
         }
 
         gen_var(err) = SSL_get_error(gen_var(a).ssl->ssl, n);
@@ -271,8 +271,8 @@ task_t* task_arg(async_ssl_read_) {
             gen_var(task) = async_feed_rbio(gen_var(a).ssl);
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) <= 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) <= 0) {
+                gen_return(anet_res_code(-1));
             }
             continue;
         }
@@ -281,16 +281,16 @@ task_t* task_arg(async_ssl_read_) {
             gen_var(task) = async_flush_wbio(gen_var(a).ssl);
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) < 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) < 0) {
+                gen_return(anet_res_code(-1));
             }
         }
 
         if (gen_var(err) == SSL_ERROR_ZERO_RETURN) {
-            gen_return((void*)0);
+            gen_return(anet_res_code(0));
         }
 
-        gen_return((void*)(intptr_t)-1);
+        gen_return(anet_res_code(-1));
     }
 
     gen_end(NULL);
@@ -339,8 +339,8 @@ task_t* task_arg(async_ssl_write_) {
             gen_var(task) = async_flush_wbio(gen_var(a).ssl);
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) < 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) < 0) {
+                gen_return(anet_res_code(-1));
             }
             continue;
         }
@@ -351,8 +351,8 @@ task_t* task_arg(async_ssl_write_) {
             gen_var(task) = async_feed_rbio(gen_var(a).ssl);
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) <= 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) <= 0) {
+                gen_return(anet_res_code(-1));
             }
             continue;
         }
@@ -361,19 +361,19 @@ task_t* task_arg(async_ssl_write_) {
             gen_var(task) = async_flush_wbio(gen_var(a).ssl);
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) < 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) < 0) {
+                gen_return(anet_res_code(-1));
             }
         }
 
         if (gen_var(err) == SSL_ERROR_ZERO_RETURN) {
-            gen_return((void*)0);
+            gen_return(anet_res_code(0));
         }
 
-        gen_return((void*)(intptr_t)-1);
+        gen_return(anet_res_code(-1));
     }
 
-    gen_end(gen_var(a).len);
+    gen_end(anet_res_code((intptr_t)gen_var(a).len));
 }
 
 task_t* async_ssl_write(async_ssl_t *ssl,
@@ -410,8 +410,8 @@ task_t* task_arg(async_ssl_close_) {
             gen_var(task) = async_flush_wbio(gen_var(ssl));
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) < 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) < 0) {
+                gen_return(anet_res_code(-1));
             }
             continue;
         }
@@ -422,8 +422,8 @@ task_t* task_arg(async_ssl_close_) {
             gen_var(task) = async_feed_rbio(gen_var(ssl));
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) <= 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) <= 0) {
+                gen_return(anet_res_code(-1));
             }
             continue;
         }
@@ -432,15 +432,15 @@ task_t* task_arg(async_ssl_close_) {
             gen_var(task) = async_flush_wbio(gen_var(ssl));
             gen_yield_from_task(gen_var(task));
 
-            if (future_result(gen_var(task)->future) < 0) {
-                gen_return(-1);
+            if (anet_code_of(future_result(gen_var(task)->future)) < 0) {
+                gen_return(anet_res_code(-1));
             }
         }
         break;
     }
 
     gen_var(ssl)->closed = 1;
-    gen_end(0);
+    gen_end(anet_res_code(0));
 }
 
 task_t* async_ssl_close(async_ssl_t *ssl) {

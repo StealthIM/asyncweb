@@ -103,17 +103,17 @@ task_t* task_arg(server_conn_task_) {
     while (1) {
         gen_var(fut) = async_socket_recv(gen_var(c)->conn, gen_var(chunk), sizeof(gen_var(chunk)));
         gen_yield(gen_var(fut));
-        gen_var(n) = (int)(intptr_t)future_result(gen_var(fut));
+        gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
         if (gen_var(n) <= 0) {
-            gen_return((void*)(intptr_t)ANET_ERR);
+            gen_return(anet_res_status(ANET_ERR));
         }
 
         if (gen_var(c)->buf_len + gen_var(n) > gen_var(c)->buf_cap) {
             size_t ncap = gen_var(c)->buf_cap ? gen_var(c)->buf_cap * 2 : SRV_READ_CHUNK * 2;
             while (ncap < gen_var(c)->buf_len + gen_var(n)) ncap *= 2;
-            if (ncap > SRV_REQ_MAX) { gen_return((void*)(intptr_t)ANET_ERR); }
+            if (ncap > SRV_REQ_MAX) { gen_return(anet_res_status(ANET_ERR)); }
             char *nb = realloc(gen_var(c)->buf, ncap + 1);
-            if (!nb) { gen_return((void*)(intptr_t)ANET_ERR); }
+            if (!nb) { gen_return(anet_res_status(ANET_ERR)); }
             gen_var(c)->buf = nb;
             gen_var(c)->buf_cap = ncap;
         }
@@ -157,7 +157,7 @@ task_t* task_arg(server_conn_task_) {
 
         size_t cap = 256 + blen;
         gen_var(c)->out = malloc(cap);
-        if (!gen_var(c)->out) { gen_return((void*)(intptr_t)ANET_ERR); }
+        if (!gen_var(c)->out) { gen_return(anet_res_status(ANET_ERR)); }
         int hn = snprintf(gen_var(c)->out, cap,
             "HTTP/1.1 %d %s\r\n"
             "Content-Type: %s\r\n"
@@ -175,7 +175,7 @@ task_t* task_arg(server_conn_task_) {
         (void)future_result(gen_var(fut));
     }
 
-    gen_return((void*)(intptr_t)ANET_OK);
+    gen_return(anet_res_status(ANET_OK));
 
     gen_cleanup();
     if (gen_var(c)) {

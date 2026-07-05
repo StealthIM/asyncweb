@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "pal_socket.h"
 #include "libcoro.h"
+#include "../common.h"
 
 #ifdef __cplusplus
 extern "C" {

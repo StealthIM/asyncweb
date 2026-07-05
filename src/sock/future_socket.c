@@ -40,10 +40,10 @@ static void async_io_cb(loop_t *loop,
     // ctx wraps the future; the future itself is owned by the awaiting task
     // driver. Once we've signalled completion, ctx has done its job — free it.
     if (err != 0) {
-        future_reject(ctx->future, (void*) err);
+        future_reject(ctx->future, anet_res_code(err));
     } else {
         // bytes 对 recv/send 都成立
-        future_done(ctx->future, (void*) bytes);
+        future_done(ctx->future, anet_res_code((intptr_t)bytes));
     }
     free(ctx);
 }
@@ -63,7 +63,7 @@ static void async_accept_cb(loop_t *loop,
     async_op_ctx_t *ctx = (async_op_ctx_t*)userdata;
 
     if (err != 0) {
-        future_reject(ctx->future, (void*) err);
+        future_reject(ctx->future, anet_res_code(err));
         free(ctx);
         return;
     }
@@ -130,7 +130,7 @@ future_t* async_socket_recv(async_socket_t *s,
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(fut, (void*) -1);
+        future_reject(fut, anet_res_code(-1));
         free(ctx);
     }
 
@@ -155,7 +155,7 @@ future_t* async_socket_send(async_socket_t *s,
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(fut, (void*) -1);
+        future_reject(fut, anet_res_code(-1));
         free(ctx);
     }
 
@@ -180,7 +180,7 @@ future_t* async_socket_connect(async_socket_t *s,
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(fut, (void*) -1);
+        future_reject(fut, anet_res_code(-1));
         free(ctx);
     }
 
@@ -235,7 +235,7 @@ future_t* async_socket_accept(async_listener_t *listener)
     );
 
     if (id == LOOP_INVALID_OP_ID) {
-        future_reject(fut, (void*) -1);
+        future_reject(fut, anet_res_code(-1));
         free(client);
         free(ctx);
     }
