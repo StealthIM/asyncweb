@@ -78,6 +78,22 @@ void anet_ws_message_free(anet_ws_message_t *msg);
 void anet_async_ws_destroy(anet_async_ws_t *ws);
 
 /* ============================================================
+ * WebSocket 服务端升级
+ * ============================================================ */
+
+// 服务端握手结果 (由 anet_async_ws_accept task 返回的 future result 携带)
+typedef struct {
+    async_socket_t   *sock;      // 传入的已 accept socket
+    anet_async_ws_t **ws_out;    // 成功时写入服务端 WS 连接
+} anet_async_ws_accept_t;
+
+// 在一条已 accept 的 async socket 上完成服务端 WS 握手:
+// 读取 Upgrade 请求头、校验 Sec-WebSocket-Key、回 101 响应,
+// 成功后 *ws_out 得到 is_server 模式的连接 (send 不加掩码)。
+// future result: ANET_OK / ANET_ERR。
+task_t* anet_async_ws_accept(async_socket_t *sock, anet_async_ws_t **ws_out);
+
+/* ============================================================
  * 同步WebSocket接口
  * ============================================================ */
 

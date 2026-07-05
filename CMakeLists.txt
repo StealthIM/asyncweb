@@ -111,6 +111,7 @@ if(ASYNCWEB_STANDALONE)
             tests/test_async_ws.c
             tests/test_server.c
             tests/test_http_server.c
+            tests/test_ws_server.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
     add_test_with_dir(test_sync_http test_asyncweb sync_http)
@@ -119,4 +120,5 @@ if(ASYNCWEB_STANDALONE)
     add_test_with_dir(test_async_ws test_asyncweb async_ws)
     add_test_with_dir(test_server test_asyncweb server)
     add_test_with_dir(test_http_server test_asyncweb http_server)
+    add_test_with_dir(test_ws_server test_asyncweb ws_server)
 endif()

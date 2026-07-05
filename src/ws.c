@@ -23,6 +23,7 @@ struct anet_async_ws {
     anet_ws_state_t state;
     char sec_key[64];
     int is_tls;
+    int is_server;   /* 服务端连接:发送帧不加掩码 (RFC6455) */
 };
 
 struct anet_sync_ws {
@@ -84,6 +85,21 @@ static void compute_ws_accept(const char *sec_key, char out[64]) {
     unsigned char digest[SHA_DIGEST_LENGTH];
     SHA1((const unsigned char*)concat, strlen(concat), digest);
     base64_encode(digest, SHA_DIGEST_LENGTH, out, 64);
+}
+
+// 从请求头缓冲中提取 Sec-WebSocket-Key 的值到 out (最多 out_size-1 字节)。
+// 返回 0 成功,-1 未找到。
+static int ws_extract_key(const char *headers, char *out, size_t out_size) {
+    const char *p = strcasestr(headers, "Sec-WebSocket-Key:");
+    if (!p) return -1;
+    p += strlen("Sec-WebSocket-Key:");
+    while (*p == ' ' || *p == '\t') p++;
+    size_t i = 0;
+    while (*p && *p != '\r' && *p != '\n' && i < out_size - 1) {
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    return i > 0 ? 0 : -1;
 }
 
 // 在握手响应头缓冲中校验 Sec-WebSocket-Accept 是否与期望值匹配。
@@ -693,30 +709,42 @@ task_t* task_arg(anet_async_ws_send_) {
     }
     
     gen_var(hlen) = 0;
-    
-    gen_var(header)[0] = 0x80 | (gen_var(send)->type == ANET_WS_TEXT ? 0x1 : 0x2);
-    
-    if (gen_var(send)->len <= 125) {
-        gen_var(header)[1] = 0x80 | (unsigned char)gen_var(send)->len;
-        gen_var(hlen) = 2;
-    } else if (gen_var(send)->len <= 65535) {
-        gen_var(header)[1] = 0x80 | 126;
-        gen_var(header)[2] = gen_var(send)->len >> 8 & 0xFF;
-        gen_var(header)[3] = gen_var(send)->len & 0xFF;
-        gen_var(hlen) = 4;
-    } else {
-        free(gen_var(send));
-        gen_return((void*)(intptr_t)ANET_ERR);
-    }
-    
-    for (int i = 0; i < 4; i++) gen_var(mask)[i] = rand() & 0xFF;
-    memcpy(gen_var(header) + gen_var(hlen), gen_var(mask), 4);
-    gen_var(hlen) += 4;
-    
-    gen_var(frame) = malloc(gen_var(hlen) + gen_var(send)->len);
-    memcpy(gen_var(frame), gen_var(header), gen_var(hlen));
-    for (int i = 0; i < gen_var(send)->len; i++) {
-        gen_var(frame)[gen_var(hlen) + i] = ((char*)gen_var(send)->data)[i] ^ gen_var(mask)[i % 4];
+
+    /* 服务端发送的帧不能加掩码;客户端必须加掩码 (RFC6455 5.3)。 */
+    {
+        int server = gen_var(send)->ws->is_server;
+        unsigned char mask_bit = server ? 0x00 : 0x80;
+
+        gen_var(header)[0] = 0x80 | (gen_var(send)->type == ANET_WS_TEXT ? 0x1 : 0x2);
+
+        if (gen_var(send)->len <= 125) {
+            gen_var(header)[1] = mask_bit | (unsigned char)gen_var(send)->len;
+            gen_var(hlen) = 2;
+        } else if (gen_var(send)->len <= 65535) {
+            gen_var(header)[1] = mask_bit | 126;
+            gen_var(header)[2] = gen_var(send)->len >> 8 & 0xFF;
+            gen_var(header)[3] = gen_var(send)->len & 0xFF;
+            gen_var(hlen) = 4;
+        } else {
+            free(gen_var(send));
+            gen_return((void*)(intptr_t)ANET_ERR);
+        }
+
+        if (!server) {
+            for (int i = 0; i < 4; i++) gen_var(mask)[i] = rand() & 0xFF;
+            memcpy(gen_var(header) + gen_var(hlen), gen_var(mask), 4);
+            gen_var(hlen) += 4;
+        }
+
+        gen_var(frame) = malloc(gen_var(hlen) + gen_var(send)->len);
+        memcpy(gen_var(frame), gen_var(header), gen_var(hlen));
+        if (server) {
+            memcpy(gen_var(frame) + gen_var(hlen), gen_var(send)->data, gen_var(send)->len);
+        } else {
+            for (int i = 0; i < gen_var(send)->len; i++) {
+                gen_var(frame)[gen_var(hlen) + i] = ((char*)gen_var(send)->data)[i] ^ gen_var(mask)[i % 4];
+            }
+        }
     }
     
     gen_var(task) = async_stream_write_all(gen_var(send)->ws->stream, gen_var(frame), gen_var(hlen) + gen_var(send)->len);
@@ -957,4 +985,130 @@ void anet_async_ws_destroy(anet_async_ws_t *ws) {
         async_stream_destroy(ws->stream);
         free(ws);
     }
+}
+
+/* ============================================================
+ * WebSocket 服务端升级
+ * ============================================================ */
+
+typedef struct {
+    async_socket_t   *sock;
+    anet_async_ws_t **ws_out;
+    /* 内部状态 */
+    char             *buf;       /* 累积的请求字节 */
+    size_t            buf_len;
+    size_t            buf_cap;
+    char              key[64];
+    char              accept[64];
+    char             *resp;
+} ws_accept_internal_t;
+
+#define WS_ACCEPT_REQ_MAX 8192
+
+task_t* task_arg(anet_async_ws_accept_) {
+    gen_dec_vars(
+        ws_accept_internal_t *a;
+        future_t             *fut;
+        task_t               *task;
+        anet_async_ws_t      *ws;
+        char                  chunk[1024];
+        int                   n;
+    );
+    gen_begin(ctx);
+
+    {
+        anet_async_ws_accept_t *in = (anet_async_ws_accept_t*)arg;
+        gen_var(a) = calloc(1, sizeof(*gen_var(a)));
+        if (!gen_var(a)) { free(in); gen_return((void*)(intptr_t)ANET_ERR); }
+        gen_var(a)->sock = in->sock;
+        gen_var(a)->ws_out = in->ws_out;
+        free(in);
+    }
+
+    /* 步骤1: 读到完整请求头 (\r\n\r\n) */
+    while (1) {
+        gen_var(fut) = async_socket_recv(gen_var(a)->sock, gen_var(chunk), sizeof(gen_var(chunk)));
+        gen_yield(gen_var(fut));
+        gen_var(n) = (int)(intptr_t)future_result(gen_var(fut));
+        if (gen_var(n) <= 0) { gen_return((void*)(intptr_t)ANET_ERR); }
+
+        if (gen_var(a)->buf_len + gen_var(n) + 1 > gen_var(a)->buf_cap) {
+            size_t ncap = gen_var(a)->buf_cap ? gen_var(a)->buf_cap * 2 : 2048;
+            while (ncap < gen_var(a)->buf_len + gen_var(n) + 1) ncap *= 2;
+            if (ncap > WS_ACCEPT_REQ_MAX) { gen_return((void*)(intptr_t)ANET_ERR); }
+            char *nb = realloc(gen_var(a)->buf, ncap);
+            if (!nb) { gen_return((void*)(intptr_t)ANET_ERR); }
+            gen_var(a)->buf = nb;
+            gen_var(a)->buf_cap = ncap;
+        }
+        memcpy(gen_var(a)->buf + gen_var(a)->buf_len, gen_var(chunk), gen_var(n));
+        gen_var(a)->buf_len += gen_var(n);
+        gen_var(a)->buf[gen_var(a)->buf_len] = '\0';
+
+        if (strstr(gen_var(a)->buf, "\r\n\r\n")) break;
+    }
+
+    /* 步骤2: 校验 Upgrade 并提取 key */
+    if (!strcasestr(gen_var(a)->buf, "Upgrade: websocket") ||
+        ws_extract_key(gen_var(a)->buf, gen_var(a)->key, sizeof(gen_var(a)->key)) != 0) {
+        gen_return((void*)(intptr_t)ANET_ERR);
+    }
+
+    /* 步骤3: 回 101 响应 */
+    compute_ws_accept(gen_var(a)->key, gen_var(a)->accept);
+    gen_var(a)->resp = malloc(256);
+    if (!gen_var(a)->resp) { gen_return((void*)(intptr_t)ANET_ERR); }
+    {
+        int rn = snprintf(gen_var(a)->resp, 256,
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Accept: %s\r\n"
+            "\r\n",
+            gen_var(a)->accept);
+
+        gen_var(ws) = calloc(1, sizeof(*gen_var(ws)));
+        if (!gen_var(ws)) { gen_return((void*)(intptr_t)ANET_ERR); }
+        gen_var(ws)->stream = async_stream_from_socket(gen_var(a)->sock);
+        if (!gen_var(ws)->stream) { free(gen_var(ws)); gen_var(ws) = NULL; gen_return((void*)(intptr_t)ANET_ERR); }
+        gen_var(ws)->state = ANET_WS_OPEN;
+        gen_var(ws)->is_server = 1;
+        gen_var(ws)->is_tls = 0;
+
+        gen_var(task) = async_stream_write_all(gen_var(ws)->stream, gen_var(a)->resp, (size_t)rn);
+        gen_yield_from_task(gen_var(task));
+        if (future_result(gen_var(task)->future) != (void*)0) {
+            /* 写失败:stream 壳已建,cleanup 里连 ws 一起收 */
+            gen_return((void*)(intptr_t)ANET_ERR);
+        }
+    }
+
+    *gen_var(a)->ws_out = gen_var(ws);
+    gen_var(ws) = NULL;   /* 所有权转交调用方,cleanup 不再释放 */
+    gen_return((void*)(intptr_t)ANET_OK);
+
+    gen_cleanup();
+    if (gen_var(ws)) {
+        /* 失败路径:stream 只是壳,底层 sock 归调用方(HTTP server 连接协程)管,
+           这里只释放 stream 壳和 ws 本身,不关 sock。 */
+        free(gen_var(ws)->stream);
+        free(gen_var(ws));
+        gen_var(ws) = NULL;
+    }
+    if (gen_var(a)) {
+        free(gen_var(a)->buf);
+        free(gen_var(a)->resp);
+        free(gen_var(a));
+        gen_var(a) = NULL;
+    }
+    gen_end(NULL);
+}
+
+task_t* anet_async_ws_accept(async_socket_t *sock, anet_async_ws_t **ws_out) {
+    if (!sock || !ws_out) return NULL;
+    anet_async_ws_accept_t *req = malloc(sizeof(*req));
+    if (!req) return NULL;
+    req->sock = sock;
+    req->ws_out = ws_out;
+    return anet_async_ws_accept_(req);
 }
