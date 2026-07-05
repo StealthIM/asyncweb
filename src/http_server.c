@@ -1,6 +1,8 @@
 #include "http_server.h"
 #include "sock/future_socket.h"
 #include "sock/pal_socket.h"
+#include "sock/stream.h"
+#include "tls.h"
 #include "libcoro.h"
 
 #include <stdlib.h>
@@ -19,6 +21,9 @@ struct anet_http_server {
     void                *userdata;
     uint16_t             port;
     int                  stop;
+    int                  tls;         /* 启用 HTTPS */
+    char                *cert_path;
+    char                *key_path;
 };
 
 /* ============================================================
@@ -27,11 +32,13 @@ struct anet_http_server {
 
 typedef struct {
     anet_http_server_t *server;
-    async_socket_t     *conn;
-    char               *buf;        /* 累积的请求字节 (NUL 结尾) */
+    async_socket_t     *conn;         /* accept 到的裸 socket */
+    async_ssl_t        *ssl;          /* TLS 会话 (明文时 NULL);attach 后拥有 conn */
+    async_stream_t     *stream;       /* 包裹 conn 或 ssl,统一读写 */
+    char               *buf;          /* 累积的请求字节 (NUL 结尾) */
     size_t              buf_len;
     size_t              buf_cap;
-    char               *out;        /* 构建的响应 */
+    char               *out;          /* 构建的响应 */
 } conn_ctx_t;
 
 /* 在已读缓冲里定位完整头部。就地把请求行切成 method/path/version。
@@ -89,22 +96,43 @@ task_t* task_arg(server_conn_task_) {
         size_t      head_len;
         long        content_len;
         int         have_head;
-        future_t   *fut;
+        task_t     *task;
     );
     gen_begin(ctx);
 
-    /* task_run 顶层驱动:首个 gen_send 的 arg 为 NULL;conn_ctx 存于 userdata。
-       本协程不用 gen_yield_from_task,userdata 不会被改写。 */
+    /* task_run 顶层驱动:首个 gen_send 的 arg 为 NULL;conn_ctx 存于 userdata。 */
     gen_var(c) = (conn_ctx_t*)gen_userdata();
     gen_var(have_head) = 0;
     gen_var(content_len) = 0;
     gen_var(head_len) = 0;
 
+    /* --- 建立 stream:HTTPS 先做服务端 TLS 握手,否则裸 socket --- */
+    if (gen_var(c)->server->tls) {
+        gen_var(c)->ssl = async_ssl_create_server(gen_var(c)->server->cert_path,
+                                                  gen_var(c)->server->key_path);
+        if (!gen_var(c)->ssl) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        // ssl attach 后拥有 conn(销毁时一并释放)
+        async_ssl_attach_socket(gen_var(c)->ssl, gen_var(c)->conn);
+        gen_var(task) = async_ssl_handshake(gen_var(c)->ssl);
+        gen_yield_from_task(gen_var(task));
+        if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        gen_var(c)->stream = async_stream_from_ssl(gen_var(c)->ssl);
+    } else {
+        gen_var(c)->stream = async_stream_from_socket(gen_var(c)->conn);
+    }
+    if (!gen_var(c)->stream) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+
     /* --- 读请求,直到拿到完整头部 + body --- */
     while (1) {
-        gen_var(fut) = async_socket_recv(gen_var(c)->conn, gen_var(chunk), sizeof(gen_var(chunk)));
-        gen_yield(gen_var(fut));
-        gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
+        gen_var(task) = async_stream_read(gen_var(c)->stream, sizeof(gen_var(chunk)), gen_var(chunk));
+        gen_yield_from_task(gen_var(task));
+        gen_var(n) = (int)anet_code_of(future_result(gen_var(task)->future));
         if (gen_var(n) <= 0) {
             gen_return(anet_res_status(ANET_ERR));
         }
@@ -171,18 +199,28 @@ task_t* task_arg(server_conn_task_) {
             memcpy(gen_var(c)->out + hn, sresp.body, blen);
         }
 
-        gen_var(fut) = async_socket_send(gen_var(c)->conn, gen_var(c)->out, (size_t)hn + blen);
-        gen_yield(gen_var(fut));
-        (void)future_result(gen_var(fut));
+        gen_var(task) = async_stream_write_all(gen_var(c)->stream, gen_var(c)->out, (size_t)hn + blen);
+        gen_yield_from_task(gen_var(task));
+        (void)future_result(gen_var(task)->future);
     }
 
     gen_return(anet_res_status(ANET_OK));
 
     gen_cleanup();
     if (gen_var(c)) {
-        if (gen_var(c)->conn) {
-            async_socket_close(gen_var(c)->conn);
-            free(gen_var(c)->conn);
+        /* stream 只是壳;async_stream_destroy 释放它并连带底层 ssl 或 socket。
+           TLS 时 ssl 拥有 conn;明文时 stream 直接持有 conn。两种情况都由
+           stream_destroy 收尾,故不在此单独 close/free conn。 */
+        if (gen_var(c)->stream) {
+            async_stream_destroy(gen_var(c)->stream);
+        } else {
+            /* stream 尚未建立(极早失败):自行收 ssl 或 conn */
+            if (gen_var(c)->ssl) {
+                async_ssl_destroy(gen_var(c)->ssl);
+            } else if (gen_var(c)->conn) {
+                async_socket_close(gen_var(c)->conn);
+                free(gen_var(c)->conn);
+            }
         }
         free(gen_var(c)->buf);
         free(gen_var(c)->out);
@@ -304,6 +342,21 @@ anet_http_server_t* anet_http_server_create(uint16_t port,
     return srv;
 }
 
+int anet_http_server_use_tls(anet_http_server_t *server,
+                             const char *cert_path,
+                             const char *key_path) {
+    if (!server || !cert_path || !key_path) return -1;
+    char *c = strdup(cert_path);
+    char *k = strdup(key_path);
+    if (!c || !k) { free(c); free(k); return -1; }
+    free(server->cert_path);
+    free(server->key_path);
+    server->cert_path = c;
+    server->key_path = k;
+    server->tls = 1;
+    return 0;
+}
+
 uint16_t anet_http_server_port(anet_http_server_t *server) {
     return server ? server->port : 0;
 }
@@ -336,6 +389,8 @@ void anet_http_server_destroy(anet_http_server_t *server) {
         async_listener_close(server->listener);
         free(server->listener);
     }
+    free(server->cert_path);
+    free(server->key_path);
     free(server);
 }
 

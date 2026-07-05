@@ -27,6 +27,7 @@ typedef struct {
     const char *method;
     const char *host;
     uint16_t port;
+    int use_tls;                 // 非 0 用 TLS (https),由 scheme 决定而非端口
     const char *path;
     const char **headers;
     const char *body;
@@ -59,10 +60,11 @@ typedef struct {
     size_t body_len;
 } anet_sync_http_response_t;
 
-// 发送 HTTP 请求
+// 发送 HTTP 请求。use_tls: 非 0 时用 TLS (https),由 scheme 决定而非端口。
 anet_status_t anet_sync_http_request(const char *method,
                      const char *host,
                      uint16_t port,
+                     int use_tls,
                      const char *path,
                      const char **headers,
                      const char *body,

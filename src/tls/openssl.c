@@ -170,9 +170,40 @@ async_ssl_t* async_ssl_create(async_ssl_role_t role,
             X509_VERIFY_PARAM_set1_host(param, hostname, 0);
         }
     } else {
-        // need to load certificate file
+        // 服务端角色请改用 async_ssl_create_server(证书在那里加载)。
         SSL_set_accept_state(s->ssl);
     }
+
+    return s;
+}
+
+async_ssl_t* async_ssl_create_server(const char *cert_path,
+                                     const char *key_path) {
+    if (!cert_path || !key_path) return NULL;
+
+    async_ssl_t *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    s->ctx = SSL_CTX_new(TLS_method());
+    if (!s->ctx) { free(s); return NULL; }
+    SSL_CTX_set_min_proto_version(s->ctx, TLS1_2_VERSION);
+    // 服务端默认不校验客户端证书。
+    SSL_CTX_set_verify(s->ctx, SSL_VERIFY_NONE, NULL);
+
+    if (SSL_CTX_use_certificate_chain_file(s->ctx, cert_path) != 1 ||
+        SSL_CTX_use_PrivateKey_file(s->ctx, key_path, SSL_FILETYPE_PEM) != 1 ||
+        SSL_CTX_check_private_key(s->ctx) != 1) {
+        SSL_CTX_free(s->ctx);
+        free(s);
+        return NULL;
+    }
+
+    s->ssl  = SSL_new(s->ctx);
+    s->rbio = BIO_new(BIO_s_mem());
+    s->wbio = BIO_new(BIO_s_mem());
+    BIO_set_write_buf_size(s->wbio, 16 * 1024);
+    SSL_set_bio(s->ssl, s->rbio, s->wbio);
+    SSL_set_accept_state(s->ssl);
 
     return s;
 }

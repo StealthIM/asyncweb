@@ -16,8 +16,9 @@ extern "C" {
  *   - accept 循环 (每个服务器一个协程)
  *   - 每连接一个协程:读请求行+头部+body、调 handler、写响应、关闭
  *
- * 当前限制:仅明文 HTTP (无 TLS 服务端);单次请求/响应后关闭连接
- * (Connection: close 语义);请求缓冲固定上限。
+ * 支持明文 HTTP 与 HTTPS (见 anet_http_server_use_tls)。
+ * 当前限制:单次请求/响应后关闭连接 (Connection: close 语义);
+ * 请求缓冲固定上限。
  * ============================================================ */
 
 // 服务端收到的请求 (指针在 handler 调用期间有效)
@@ -48,6 +49,12 @@ typedef struct anet_http_server anet_http_server_t;
 anet_http_server_t* anet_http_server_create(uint16_t port,
                                             anet_http_handler_t handler,
                                             void *userdata);
+
+// 启用 HTTPS:每个连接在读请求前先做服务端 TLS 握手。cert_path/key_path
+// 为 PEM 文件路径。须在 anet_http_server_run 之前调用。成功返回 0,失败 -1。
+int anet_http_server_use_tls(anet_http_server_t *server,
+                             const char *cert_path,
+                             const char *key_path);
 
 // 实际绑定的端口 (port==0 时用来取临时端口)。
 uint16_t anet_http_server_port(anet_http_server_t *server);

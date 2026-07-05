@@ -24,6 +24,11 @@ extern "C" {
     async_ssl_t* async_ssl_create(async_ssl_role_t role,
                                   const char *hostname /* SNI, 可为空 */);
 
+    // 创建服务端 SSL 会话:加载证书链与私钥,设为 accept 模式(不校验客户端)。
+    // cert_path/key_path 为 PEM 文件路径。失败返回 NULL。
+    async_ssl_t* async_ssl_create_server(const char *cert_path,
+                                         const char *key_path);
+
     void async_ssl_destroy(async_ssl_t *ssl);
 
     // 绑定 socket（必须是 async_socket）

@@ -262,6 +262,7 @@ static int parse_response(const char *response_data, size_t response_len, void *
 anet_status_t anet_sync_http_request(const char *method,
                      const char *host,
                      uint16_t port,
+                     int use_tls,
                      const char *path,
                      const char **headers,
                      const char *body,
@@ -305,7 +306,7 @@ anet_status_t anet_sync_http_request(const char *method,
     
     // 创建stream
     sync_stream_t *stream = NULL;
-    int is_ssl = (port == 443);
+    int is_ssl = use_tls;
     
     if (is_ssl) {
         // 创建SSL
@@ -433,7 +434,8 @@ anet_status_t anet_sync_http_get(const char *url, anet_sync_http_response_t *res
     if (parse_url(url, &parsed) != 0) return ANET_ERR;
     
     const char *headers[] = { "User-Agent: asyncweb/0.1", "Accept: */*", NULL };
-    return anet_sync_http_request("GET", parsed.host, parsed.port, parsed.path, headers, NULL, response);
+    int use_tls = (strcmp(parsed.scheme, "https") == 0);
+    return anet_sync_http_request("GET", parsed.host, parsed.port, use_tls, parsed.path, headers, NULL, response);
 }
 
 // 简化的 POST 请求
@@ -449,7 +451,8 @@ anet_status_t anet_sync_http_post(const char *url, const char *content_type, con
         headers[1] = ct_header;
     }
     
-    return anet_sync_http_request("POST", parsed.host, parsed.port, parsed.path, headers, body, response);
+    int use_tls = (strcmp(parsed.scheme, "https") == 0);
+    return anet_sync_http_request("POST", parsed.host, parsed.port, use_tls, parsed.path, headers, body, response);
 }
 
 /* ============================================================
@@ -461,6 +464,7 @@ typedef struct {
     const char *method;
     const char *host;
     uint16_t port;
+    int use_tls;
     const char *path;
     const char **headers;
     const char *body;
@@ -505,6 +509,7 @@ task_t* task_arg(anet_async_http_request_) {
         gen_var(req)->method = in->method;
         gen_var(req)->host = in->host;
         gen_var(req)->port = in->port;
+        gen_var(req)->use_tls = in->use_tls;
         gen_var(req)->path = in->path;
         gen_var(req)->headers = in->headers;
         gen_var(req)->body = in->body;
@@ -560,7 +565,7 @@ task_t* task_arg(anet_async_http_request_) {
     }
 
     // 步骤4: 创建SSL（如果是HTTPS）
-    int is_ssl = (gen_var(req)->port == 443);
+    int is_ssl = gen_var(req)->use_tls;
 
     if (is_ssl) {
         gen_var(req)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(req)->host);
@@ -719,6 +724,7 @@ task_t* task_arg(anet_async_http_get_) {
         gen_var(req).method = "GET";
         gen_var(req).host = gen_var(parsed).host;
         gen_var(req).port = gen_var(parsed).port;
+        gen_var(req).use_tls = (strcmp(gen_var(parsed).scheme, "https") == 0);
         gen_var(req).path = gen_var(parsed).path;
         gen_var(req).headers = gen_var(headers);
         gen_var(req).body = NULL;
@@ -783,6 +789,7 @@ task_t* task_arg(anet_async_http_post_) {
         gen_var(req).method = "POST";
         gen_var(req).host = gen_var(parsed).host;
         gen_var(req).port = gen_var(parsed).port;
+        gen_var(req).use_tls = (strcmp(gen_var(parsed).scheme, "https") == 0);
         gen_var(req).path = gen_var(parsed).path;
         gen_var(req).headers = gen_var(headers);
         gen_var(req).body = gen_var(body);
