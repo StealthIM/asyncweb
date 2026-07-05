@@ -274,18 +274,10 @@ anet_status_t anet_sync_http_request(const char *method,
     // 初始化平台socket
     anet_palsock_init();
     
-    // 创建socket
-    anet_palsock_t sock = anet_palsock_create(AF_INET, SOCK_STREAM, 0, 0);
-    if (!anet_palsock_is_valid(sock)) {
-        anet_palsock_cleanup();
-        return ANET_ERR;
-    }
-    
-    // 解析地址
+    // 解析地址 (先 resolve,再按返回的地址族建 socket,支持 v4/v6)
     struct sockaddr_storage addr;
     int addr_len;
-    if (anet_palsock_resolve(host, &addr, &addr_len) != 0) {
-        anet_palsock_close(sock);
+    if (anet_palsock_resolve(host, AF_UNSPEC, &addr, &addr_len) != 0) {
         anet_palsock_cleanup();
         return ANET_ERR;
     }
@@ -295,6 +287,13 @@ anet_status_t anet_sync_http_request(const char *method,
         ((struct sockaddr_in*)&addr)->sin_port = htons(port);
     } else if (addr.ss_family == AF_INET6) {
         ((struct sockaddr_in6*)&addr)->sin6_port = htons(port);
+    }
+    
+    // 按地址族创建 socket
+    anet_palsock_t sock = anet_palsock_create(addr.ss_family, SOCK_STREAM, 0, 0);
+    if (!anet_palsock_is_valid(sock)) {
+        anet_palsock_cleanup();
+        return ANET_ERR;
     }
     
     // 连接
@@ -517,14 +516,8 @@ task_t* task_arg(anet_async_http_request_) {
         gen_var(req)->sock = -1;
     }
 
-    // 步骤1: 创建socket
-    gen_var(req)->sock = anet_palsock_create(AF_INET, SOCK_STREAM, 0, 1);
-    if (!anet_palsock_is_valid(gen_var(req)->sock)) {
-        gen_return(anet_res_status(ANET_ERR));
-    }
-
-    // 步骤2: 异步解析地址 (阻塞 getaddrinfo offload 到线程池)
-    gen_var(resolve_fut) = anet_palsock_resolve_async(gen_var(req)->host);
+    // 步骤1: 异步解析地址 (阻塞 getaddrinfo offload 到线程池)
+    gen_var(resolve_fut) = anet_palsock_resolve_async(gen_var(req)->host, AF_UNSPEC);
     if (!gen_var(resolve_fut)) {
         gen_return(anet_res_status(ANET_ERR));
     }
@@ -545,6 +538,12 @@ task_t* task_arg(anet_async_http_request_) {
         ((struct sockaddr_in*)&gen_var(addr))->sin_port = htons(gen_var(req)->port);
     } else if (gen_var(addr).ss_family == AF_INET6) {
         ((struct sockaddr_in6*)&gen_var(addr))->sin6_port = htons(gen_var(req)->port);
+    }
+
+    // 步骤2: 按地址族创建 socket
+    gen_var(req)->sock = anet_palsock_create(gen_var(addr).ss_family, SOCK_STREAM, 0, 1);
+    if (!anet_palsock_is_valid(gen_var(req)->sock)) {
+        gen_return(anet_res_status(ANET_ERR));
     }
 
     // 创建异步socket

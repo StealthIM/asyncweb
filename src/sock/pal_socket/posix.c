@@ -145,19 +145,19 @@ int anet_palsock_parse_addr(const char *host, uint16_t port,
         return 0;
     }
 
-    // 非纯 IP → 用 DNS
-    return anet_palsock_resolve(host, out_addr, out_len);
+    // 非纯 IP → 用 DNS (任意族)
+    return anet_palsock_resolve(host, AF_UNSPEC, out_addr, out_len);
 }
 
 int anet_palsock_resolve(const char *hostname,
+                     int af_hint,
                      struct sockaddr_storage *out_addr,
                      int *out_len)
 {
-    // Sockets are created as AF_INET throughout, so resolve to IPv4 only —
-    // otherwise an AF_UNSPEC result may hand back an IPv6 address that a
-    // AF_INET socket cannot connect to.
+    // af_hint 直接映射到 getaddrinfo 的地址族偏好:AF_UNSPEC 任意、
+    // AF_INET 只 v4、AF_INET6 只 v6。调用方按 out_addr->ss_family 建 socket。
     struct addrinfo hints = {0};
-    hints.ai_family = AF_INET;
+    hints.ai_family = af_hint;
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res;
@@ -171,30 +171,39 @@ int anet_palsock_resolve(const char *hostname,
     return 0;
 }
 
-// 在 worker 线程执行的阻塞解析。arg 是 strdup 的 hostname,worker 负责 free。
-// 返回值是堆分配的 anet_resolve_result_t*,成为 future 的 result。
+// worker 线程的入参:hostname (堆分配,worker 负责 free) + 地址族偏好。
+typedef struct {
+    char *hostname;
+    int   af_hint;
+} resolve_job_t;
+
+// 在 worker 线程执行的阻塞解析。返回堆分配的 anet_resolve_result_t*,成为 future 的 result。
 static void *resolve_worker(void *arg)
 {
-    char *hostname = (char *)arg;
+    resolve_job_t *job = (resolve_job_t *)arg;
     anet_resolve_result_t *r = calloc(1, sizeof(*r));
-    if (!r) { free(hostname); return NULL; }
+    if (!r) { free(job->hostname); free(job); return NULL; }
 
-    if (anet_palsock_resolve(hostname, &r->addr, &r->addr_len) != 0) {
+    if (anet_palsock_resolve(job->hostname, job->af_hint, &r->addr, &r->addr_len) != 0) {
         r->ok = -1;
     } else {
         r->ok = 0;
     }
-    free(hostname);
+    free(job->hostname);
+    free(job);
     return r;
 }
 
-struct future_s *anet_palsock_resolve_async(const char *hostname)
+struct future_s *anet_palsock_resolve_async(const char *hostname, int af_hint)
 {
     if (!hostname) return NULL;
-    char *copy = strdup(hostname);
-    if (!copy) return NULL;
-    struct future_s *fut = loop_run_in_thread(resolve_worker, copy);
-    if (!fut) { free(copy); return NULL; }
+    resolve_job_t *job = malloc(sizeof(*job));
+    if (!job) return NULL;
+    job->hostname = strdup(hostname);
+    if (!job->hostname) { free(job); return NULL; }
+    job->af_hint = af_hint;
+    struct future_s *fut = loop_run_in_thread(resolve_worker, job);
+    if (!fut) { free(job->hostname); free(job); return NULL; }
     return fut;
 }
 

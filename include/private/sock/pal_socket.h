@@ -110,14 +110,18 @@ int anet_palsock_parse_addr(const char *host, uint16_t port,
                      int *out_len);
 
 // DNS 解析（getaddrinfo 的包装）
-// 只返回 *一个* IPv4/IPv6 结果（简化）
+// 只返回 *一个* 结果（简化）。af_hint 指定地址族偏好:
+//   AF_UNSPEC = 任意(v4/v6 皆可)、AF_INET = 只要 v4、AF_INET6 = 只要 v6。
+// 调用方按返回的 out_addr->ss_family 创建对应 socket。
 int anet_palsock_resolve(const char *hostname,
+                     int af_hint,
                      struct sockaddr_storage *out_addr,
                   int *out_len);
 
 // 异步 DNS 解析:把阻塞的 getaddrinfo offload 到 libcoro 线程池,
 // 返回一个 future,其 result 是一个堆分配的 anet_resolve_result_t*
 // (由调用方 free)。future 永远 resolve,失败时 result->ok != 0。
+// af_hint 语义同 anet_palsock_resolve。
 typedef struct anet_resolve_result_s {
     int ok;                          // 0 成功,-1 失败
     struct sockaddr_storage addr;
@@ -125,7 +129,7 @@ typedef struct anet_resolve_result_s {
 } anet_resolve_result_t;
 
 struct future_s;
-struct future_s *anet_palsock_resolve_async(const char *hostname);
+struct future_s *anet_palsock_resolve_async(const char *hostname, int af_hint);
 
 
 // ============================================================
