@@ -56,6 +56,14 @@ int anet_http_server_use_tls(anet_http_server_t *server,
                              const char *cert_path,
                              const char *key_path);
 
+// 启用 HTTPS (内存证书版, 嵌入式 / NO_FILESYSTEM): cert/key 以内存 buffer
+// (DER 或 PEM) 传入, is_der 非 0 表示 DER。buffer 不拷贝, 生命周期须覆盖
+// server。须在 anet_http_server_run 之前调用。成功返回 0, 失败 -1。
+int anet_http_server_use_tls_mem(anet_http_server_t *server,
+                                 const unsigned char *cert, int cert_len,
+                                 const unsigned char *key, int key_len,
+                                 int is_der);
+
 // 实际绑定的端口 (port==0 时用来取临时端口)。
 uint16_t anet_http_server_port(anet_http_server_t *server);
 

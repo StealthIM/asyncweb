@@ -22,8 +22,16 @@ struct anet_http_server {
     uint16_t             port;
     int                  stop;
     int                  tls;         /* 启用 HTTPS */
-    char                *cert_path;
+    char                *cert_path;    /* file-based (openssl/wolfssl 有文件系统) */
     char                *key_path;
+
+    /* 内存证书 (嵌入式 / NO_FILESYSTEM): 非 NULL 时优先于 cert_path/key_path。
+     * 指向调用方持有的 buffer (server 不拷贝, 生命周期须覆盖 server)。 */
+    const unsigned char *cert_mem;
+    int                  cert_mem_len;
+    const unsigned char *key_mem;
+    int                  key_mem_len;
+    int                  cert_is_der;
 };
 
 /* ============================================================
@@ -143,8 +151,15 @@ task_t* task_arg(server_conn_task_) {
 
     /* --- 建立 stream:HTTPS 先做服务端 TLS 握手,否则裸 socket --- */
     if (gen_var(c)->server->tls) {
-        gen_var(c)->ssl = async_ssl_create_server(gen_var(c)->server->cert_path,
-                                                  gen_var(c)->server->key_path);
+        if (gen_var(c)->server->cert_mem) {
+            gen_var(c)->ssl = async_ssl_create_server_mem(
+                gen_var(c)->server->cert_mem, gen_var(c)->server->cert_mem_len,
+                gen_var(c)->server->key_mem,  gen_var(c)->server->key_mem_len,
+                gen_var(c)->server->cert_is_der);
+        } else {
+            gen_var(c)->ssl = async_ssl_create_server(gen_var(c)->server->cert_path,
+                                                      gen_var(c)->server->key_path);
+        }
         if (!gen_var(c)->ssl) {
             gen_return(anet_res_status(ANET_ERR));
         }
@@ -418,6 +433,21 @@ int anet_http_server_use_tls(anet_http_server_t *server,
     free(server->key_path);
     server->cert_path = c;
     server->key_path = k;
+    server->tls = 1;
+    return 0;
+}
+
+int anet_http_server_use_tls_mem(anet_http_server_t *server,
+                                 const unsigned char *cert, int cert_len,
+                                 const unsigned char *key, int key_len,
+                                 int is_der) {
+    if (!server || !cert || cert_len <= 0 || !key || key_len <= 0) return -1;
+    /* buffer 不拷贝: 调用方须保证生命周期覆盖 server (嵌入式常为静态/常量)。 */
+    server->cert_mem = cert;
+    server->cert_mem_len = cert_len;
+    server->key_mem = key;
+    server->key_mem_len = key_len;
+    server->cert_is_der = is_der;
     server->tls = 1;
     return 0;
 }
