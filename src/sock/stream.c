@@ -566,7 +566,7 @@ int sync_stream_is_closed(sync_stream_t *s) {
 
 anet_palsock_t sync_stream_get_socket(sync_stream_t *s) {
     if (!s || s->type != STREAM_TYPE_SOCKET) {
-        return -1;
+        return ANET_PALSOCK_INVALID;
     }
     return s->u.sock;
 }

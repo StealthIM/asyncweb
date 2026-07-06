@@ -37,6 +37,13 @@ extern "C" {
     typedef int anet_palsock_t;
 #endif
 
+// 无效 socket 哨兵。裸机 (void*) 用 NULL, 其余 (int fd) 用 -1。
+#if defined(LIBCORO_LWIP_RAW)
+    #define ANET_PALSOCK_INVALID (NULL)
+#else
+    #define ANET_PALSOCK_INVALID (-1)
+#endif
+
 
 // ============================================================
 // 错误码统一（同一组错误码跨平台）
