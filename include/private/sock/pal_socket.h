@@ -11,7 +11,12 @@ extern "C" {
 // 平台判断
 // ============================================================
 
-#if defined(LIBCORO_LWIP)
+#if defined(LIBCORO_LWIP_RAW)
+    // 裸机 raw lwIP (NO_SYS=1): 没有 fd, handle 是 raw_conn_t* (loop 的 void*
+    // handle)。sockaddr 被 LWIP_SOCKET gate 掉, 用端口自带的最小定义。
+    #include "raw_inet.h"
+    typedef void* anet_palsock_t;
+#elif defined(LIBCORO_LWIP)
     // lwIP 后端: socket/sockaddr 全部用 lwIP 的定义 (与系统 socket 是两个
     // 命名空间, struct sockaddr 布局也不同, 不能混)。fd 是 lwip_socket 返回的 int。
     #include "lwip/sockets.h"
