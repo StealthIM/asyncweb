@@ -109,8 +109,7 @@ int anet_palsock_send(anet_palsock_t s, const void *buf, size_t len, int flags)
 
 int anet_palsock_getsockname(anet_palsock_t s, struct sockaddr *addr, int *addrlen)
 {
-    (void)s; (void)addr; (void)addrlen;
-    return -1;   /* raw pcb 的本地地址查询未接; 裸机 echo 路径用不到 */
+    return anet_raw_getsockname(s, addr, addrlen);
 }
 
 /* ====================== socket 选项 (raw pcb 无 setsockopt) ====================== */
