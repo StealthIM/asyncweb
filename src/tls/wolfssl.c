@@ -16,7 +16,11 @@
  * 握手/读/写/关闭的协程骨架照搬。
  * ============================================================ */
 
+/* host 构建走 autoconf 生成的 options.h; 裸机/嵌入式用 -DWOLFSSL_USER_SETTINGS
+ * + user_settings.h (由 settings.h 自动 include), 此时没有 options.h。 */
+#ifndef WOLFSSL_USER_SETTINGS
 #include <wolfssl/options.h>
+#endif
 #include <wolfssl/ssl.h>
 #include <wolfssl/error-ssl.h>
 
@@ -26,7 +30,6 @@
 
 #include "tls.h"
 #include "sock/future_socket.h"
-#include "sock/stream.h"
 
 #define TLS_IO_BUF 16384
 
@@ -170,6 +173,9 @@ task_t* task_arg(async_feed_in) {
  * async create / attach
  * ------------------------------------------------------------ */
 
+/* file-based 证书加载 (load_verify_locations / use_certificate_chain_file)
+ * 在 NO_FILESYSTEM 下不可用; 嵌入式改用下面的 *_mem 版。 */
+#ifndef NO_FILESYSTEM
 async_ssl_t* async_ssl_create(async_ssl_role_t role,
                               const char *hostname) {
     async_ssl_t *s = calloc(1, sizeof(*s));
@@ -231,6 +237,92 @@ async_ssl_t* async_ssl_create_server(const char *cert_path,
 
     if (wolfSSL_CTX_use_certificate_chain_file(s->ctx, cert_path) != WOLFSSL_SUCCESS ||
         wolfSSL_CTX_use_PrivateKey_file(s->ctx, key_path, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        wolfSSL_CTX_free(s->ctx); free(s); return NULL;
+    }
+
+    s->ssl = wolfSSL_new(s->ctx);
+    if (!s->ssl) { wolfSSL_CTX_free(s->ctx); free(s); return NULL; }
+
+    wolfSSL_SetIOReadCtx(s->ssl, s);
+    wolfSSL_SetIOWriteCtx(s->ssl, s);
+
+    return s;
+}
+#endif /* !NO_FILESYSTEM */
+
+/* ---- 内存证书版 (嵌入式 / NO_FILESYSTEM) ----
+ * 与 file-based 版共用同一套 IO 回调 + inbuf/outbuf 结构, 只是证书从内存
+ * buffer 加载 (wolfSSL_CTX_*_buffer) 而非文件, 因此裸机无文件系统也能用。 */
+
+async_ssl_t* async_ssl_create_mem(async_ssl_role_t role,
+                                  const char *hostname,
+                                  const unsigned char *ca, int ca_len,
+                                  int is_der) {
+    async_ssl_t *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    int fmt = is_der ? WOLFSSL_FILETYPE_ASN1 : WOLFSSL_FILETYPE_PEM;
+
+    WOLFSSL_METHOD *method = (role == ASYNC_SSL_CLIENT)
+        ? wolfTLS_client_method()
+        : wolfTLS_server_method();
+    s->ctx = wolfSSL_CTX_new(method);
+    if (!s->ctx) { free(s); return NULL; }
+
+    wolfSSL_CTX_SetIORecv(s->ctx, async_recv_cb);
+    wolfSSL_CTX_SetIOSend(s->ctx, async_send_cb);
+    wolfSSL_CTX_SetMinVersion(s->ctx, WOLFSSL_TLSV1_2);
+
+    if (role == ASYNC_SSL_CLIENT) {
+        if (ca) {
+            wolfSSL_CTX_set_verify(s->ctx, WOLFSSL_VERIFY_PEER, NULL);
+            if (wolfSSL_CTX_load_verify_buffer(s->ctx, ca, ca_len, fmt)
+                    != WOLFSSL_SUCCESS) {
+                wolfSSL_CTX_free(s->ctx); free(s); return NULL;
+            }
+        } else {
+            wolfSSL_CTX_set_verify(s->ctx, WOLFSSL_VERIFY_NONE, NULL);
+        }
+    }
+
+    s->ssl = wolfSSL_new(s->ctx);
+    if (!s->ssl) { wolfSSL_CTX_free(s->ctx); free(s); return NULL; }
+
+    wolfSSL_SetIOReadCtx(s->ssl, s);
+    wolfSSL_SetIOWriteCtx(s->ssl, s);
+
+    if (role == ASYNC_SSL_CLIENT && hostname) {
+        wolfSSL_UseSNI(s->ssl, WOLFSSL_SNI_HOST_NAME, hostname, (unsigned short)strlen(hostname));
+        if (hostname[0] >= '0' && hostname[0] <= '9') {
+            wolfSSL_check_ip_address(s->ssl, hostname);
+        } else {
+            wolfSSL_check_domain_name(s->ssl, hostname);
+        }
+    }
+
+    return s;
+}
+
+async_ssl_t* async_ssl_create_server_mem(const unsigned char *cert, int cert_len,
+                                         const unsigned char *key, int key_len,
+                                         int is_der) {
+    if (!cert || !key) return NULL;
+
+    async_ssl_t *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    int fmt = is_der ? WOLFSSL_FILETYPE_ASN1 : WOLFSSL_FILETYPE_PEM;
+
+    s->ctx = wolfSSL_CTX_new(wolfTLS_server_method());
+    if (!s->ctx) { free(s); return NULL; }
+
+    wolfSSL_CTX_SetIORecv(s->ctx, async_recv_cb);
+    wolfSSL_CTX_SetIOSend(s->ctx, async_send_cb);
+    wolfSSL_CTX_SetMinVersion(s->ctx, WOLFSSL_TLSV1_2);
+    wolfSSL_CTX_set_verify(s->ctx, WOLFSSL_VERIFY_NONE, NULL);
+
+    if (wolfSSL_CTX_use_certificate_buffer(s->ctx, cert, cert_len, fmt) != WOLFSSL_SUCCESS ||
+        wolfSSL_CTX_use_PrivateKey_buffer(s->ctx, key, key_len, fmt) != WOLFSSL_SUCCESS) {
         wolfSSL_CTX_free(s->ctx); free(s); return NULL;
     }
 
@@ -507,7 +599,11 @@ int async_ssl_is_closed(async_ssl_t *ssl) {
 
 /* ============================================================
  * sync SSL
+ *
+ * sync 版用 file-based 证书 + 阻塞 pal_socket, 嵌入式 (NO_FILESYSTEM,
+ * 裸机不链 pal_socket) 用不到, 整段 guard 掉。
  * ============================================================ */
+#ifndef NO_FILESYSTEM
 
 struct sync_ssl {
     WOLFSSL_CTX   *ctx;
@@ -698,6 +794,8 @@ void sync_ssl_destroy(sync_ssl_t *ssl) {
 int sync_ssl_is_closed(sync_ssl_t *ssl) {
     return ssl ? ssl->closed : 1;
 }
+
+#endif /* !NO_FILESYSTEM */
 
 /* ============================================================
  * 后端无关 crypto 原语 (wolfSSL 实现)

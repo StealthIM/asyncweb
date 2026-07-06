@@ -29,6 +29,21 @@ extern "C" {
     async_ssl_t* async_ssl_create_server(const char *cert_path,
                                          const char *key_path);
 
+    // ---- 内存证书版 (嵌入式 / NO_FILESYSTEM: 无文件系统时用) ----
+    // 证书/密钥以内存 buffer (DER 或 PEM) 传入, is_der 非 0 表示 DER (ASN.1)。
+
+    // 客户端:用内存 CA 证书校验对端。ca 可为 NULL (则不校验, 仅测试用)。
+    // hostname 为 SNI + 校验名, 可为空。失败返回 NULL。
+    async_ssl_t* async_ssl_create_mem(async_ssl_role_t role,
+                                      const char *hostname,
+                                      const unsigned char *ca, int ca_len,
+                                      int is_der);
+
+    // 服务端:用内存证书链 + 私钥。设为 accept 模式 (不校验客户端)。失败返回 NULL。
+    async_ssl_t* async_ssl_create_server_mem(const unsigned char *cert, int cert_len,
+                                             const unsigned char *key, int key_len,
+                                             int is_der);
+
     void async_ssl_destroy(async_ssl_t *ssl);
 
     // 绑定 socket（必须是 async_socket）
