@@ -431,7 +431,10 @@ void anet_sync_ws_destroy(anet_sync_ws_t *ws) {
 typedef struct {
     const char *url;
     anet_async_ws_t **ws_out;
-    
+    const unsigned char *ca_mem;
+    int                  ca_mem_len;
+    int                  ca_is_der;
+
     // 内部状态
     char host[256];
     char path[256];
@@ -474,6 +477,9 @@ task_t* task_arg(anet_async_ws_connect_) {
         // 复制参数
         gen_var(conn)->url = in->url;
         gen_var(conn)->ws_out = in->ws_out;
+        gen_var(conn)->ca_mem = in->ca_mem;
+        gen_var(conn)->ca_mem_len = in->ca_mem_len;
+        gen_var(conn)->ca_is_der = in->ca_is_der;
         free(in);
         
         // 解析URL
@@ -530,7 +536,13 @@ task_t* task_arg(anet_async_ws_connect_) {
 
     // 步骤5: 创建SSL（如果是WSS）
     if (gen_var(conn)->is_tls) {
-        gen_var(conn)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(conn)->host);
+        if (gen_var(conn)->ca_mem) {
+            /* 内存 CA (嵌入式): 不校验 hostname (测试证书 CN 未必匹配)。 */
+            gen_var(conn)->async_ssl = async_ssl_create_mem(ASYNC_SSL_CLIENT, NULL,
+                gen_var(conn)->ca_mem, gen_var(conn)->ca_mem_len, gen_var(conn)->ca_is_der);
+        } else {
+            gen_var(conn)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(conn)->host);
+        }
         if (!gen_var(conn)->async_ssl) {
             gen_return(anet_res_status(ANET_ERR));
         }
@@ -654,14 +666,28 @@ task_t* task_arg(anet_async_ws_connect_) {
 }
 
 task_t* anet_async_ws_connect(const char *url, anet_async_ws_t **ws) {
-    anet_async_ws_connect_t *req = malloc(sizeof(*req));
+    anet_async_ws_connect_t *req = calloc(1, sizeof(*req));
     if (!req) return NULL;
-    
+
     req->url = url;
     req->ws_out = ws;
-    
-    task_t *task = anet_async_ws_connect_(req);
-    return task;
+
+    return anet_async_ws_connect_(req);
+}
+
+task_t* anet_async_ws_connect_mem(const char *url,
+                                  const unsigned char *ca, int ca_len, int is_der,
+                                  anet_async_ws_t **ws) {
+    anet_async_ws_connect_t *req = calloc(1, sizeof(*req));
+    if (!req) return NULL;
+
+    req->url = url;
+    req->ws_out = ws;
+    req->ca_mem = ca;
+    req->ca_mem_len = ca_len;
+    req->ca_is_der = is_der;
+
+    return anet_async_ws_connect_(req);
 }
 
 // 异步WebSocket发送参数扩展
@@ -995,6 +1021,11 @@ typedef struct {
     int               tls;
     const char       *cert_path;
     const char       *key_path;
+    const unsigned char *cert_mem;
+    int                  cert_mem_len;
+    const unsigned char *key_mem;
+    int                  key_mem_len;
+    int                  cert_is_der;
     /* 内部状态 */
     async_ssl_t      *ssl;       /* wss 时的 TLS 会话 (attach 后拥有 sock) */
     async_stream_t   *stream;    /* 包裹 sock 或 ssl,握手请求经此读写 */
@@ -1027,6 +1058,11 @@ task_t* task_arg(anet_async_ws_accept_) {
         gen_var(a)->tls = in->tls;
         gen_var(a)->cert_path = in->cert_path;
         gen_var(a)->key_path = in->key_path;
+        gen_var(a)->cert_mem = in->cert_mem;
+        gen_var(a)->cert_mem_len = in->cert_mem_len;
+        gen_var(a)->key_mem = in->key_mem;
+        gen_var(a)->key_mem_len = in->key_mem_len;
+        gen_var(a)->cert_is_der = in->cert_is_der;
         free(in);
     }
 
@@ -1034,7 +1070,14 @@ task_t* task_arg(anet_async_ws_accept_) {
        建 stream 后 sock 的所有权归 stream (TLS 时经 ssl) —— 成功/失败都由
        cleanup 里的 async_stream_destroy 统一收尾,与明文早期失败区分见下。 */
     if (gen_var(a)->tls) {
-        gen_var(a)->ssl = async_ssl_create_server(gen_var(a)->cert_path, gen_var(a)->key_path);
+        if (gen_var(a)->cert_mem) {
+            gen_var(a)->ssl = async_ssl_create_server_mem(
+                gen_var(a)->cert_mem, gen_var(a)->cert_mem_len,
+                gen_var(a)->key_mem,  gen_var(a)->key_mem_len,
+                gen_var(a)->cert_is_der);
+        } else {
+            gen_var(a)->ssl = async_ssl_create_server(gen_var(a)->cert_path, gen_var(a)->key_path);
+        }
         if (!gen_var(a)->ssl) { gen_return(anet_res_status(ANET_ERR)); }
         async_ssl_attach_socket(gen_var(a)->ssl, gen_var(a)->sock);
         gen_var(task) = async_ssl_handshake(gen_var(a)->ssl);
@@ -1163,5 +1206,24 @@ task_t* anet_async_ws_accept_tls(async_socket_t *sock,
     req->tls = 1;
     req->cert_path = cert_path;
     req->key_path = key_path;
+    return anet_async_ws_accept_(req);
+}
+
+task_t* anet_async_ws_accept_tls_mem(async_socket_t *sock,
+                                     const unsigned char *cert, int cert_len,
+                                     const unsigned char *key, int key_len,
+                                     int is_der,
+                                     anet_async_ws_t **ws_out) {
+    if (!sock || !ws_out || !cert || cert_len <= 0 || !key || key_len <= 0) return NULL;
+    anet_async_ws_accept_t *req = calloc(1, sizeof(*req));
+    if (!req) return NULL;
+    req->sock = sock;
+    req->ws_out = ws_out;
+    req->tls = 1;
+    req->cert_mem = cert;
+    req->cert_mem_len = cert_len;
+    req->key_mem = key;
+    req->key_mem_len = key_len;
+    req->cert_is_der = is_der;
     return anet_async_ws_accept_(req);
 }

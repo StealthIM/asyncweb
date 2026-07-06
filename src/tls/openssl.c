@@ -210,6 +210,117 @@ async_ssl_t* async_ssl_create_server(const char *cert_path,
     return s;
 }
 
+/* ---- 内存证书版 (与 wolfssl.c 对齐; OpenSSL 有文件系统, 但 API 面要一致) ---- */
+
+async_ssl_t* async_ssl_create_mem(async_ssl_role_t role,
+                                  const char *hostname,
+                                  const unsigned char *ca, int ca_len,
+                                  int is_der) {
+    async_ssl_t *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    s->ctx = SSL_CTX_new(TLS_method());
+    if (!s->ctx) { free(s); return NULL; }
+    SSL_CTX_set_min_proto_version(s->ctx, TLS1_2_VERSION);
+
+    if (ca && ca_len > 0) {
+        X509 *cert = NULL;
+        if (is_der) {
+            const unsigned char *p = ca;
+            cert = d2i_X509(NULL, &p, ca_len);
+        } else {
+            BIO *b = BIO_new_mem_buf(ca, ca_len);
+            if (b) { cert = PEM_read_bio_X509(b, NULL, NULL, NULL); BIO_free(b); }
+        }
+        if (!cert) { SSL_CTX_free(s->ctx); free(s); return NULL; }
+        X509_STORE *store = SSL_CTX_get_cert_store(s->ctx);
+        X509_STORE_add_cert(store, cert);
+        X509_free(cert);
+        SSL_CTX_set_verify(s->ctx, SSL_VERIFY_PEER, NULL);
+    } else {
+        SSL_CTX_set_verify(s->ctx, SSL_VERIFY_NONE, NULL);
+    }
+
+    s->ssl  = SSL_new(s->ctx);
+    s->rbio = BIO_new(BIO_s_mem());
+    s->wbio = BIO_new(BIO_s_mem());
+    BIO_set_write_buf_size(s->wbio, 16 * 1024);
+    SSL_set_bio(s->ssl, s->rbio, s->wbio);
+
+    if (role == ASYNC_SSL_CLIENT) {
+        SSL_set_connect_state(s->ssl);
+        if (hostname) {
+            SSL_set_tlsext_host_name(s->ssl, hostname);
+            X509_VERIFY_PARAM *param = SSL_get0_param(s->ssl);
+            X509_VERIFY_PARAM_set1_host(param, hostname, 0);
+        }
+    } else {
+        SSL_set_accept_state(s->ssl);
+    }
+
+    return s;
+}
+
+async_ssl_t* async_ssl_create_server_mem(const unsigned char *cert, int cert_len,
+                                         const unsigned char *key, int key_len,
+                                         int is_der) {
+    if (!cert || cert_len <= 0 || !key || key_len <= 0) return NULL;
+
+    async_ssl_t *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    s->ctx = SSL_CTX_new(TLS_method());
+    if (!s->ctx) { free(s); return NULL; }
+    SSL_CTX_set_min_proto_version(s->ctx, TLS1_2_VERSION);
+    SSL_CTX_set_verify(s->ctx, SSL_VERIFY_NONE, NULL);
+
+    /* 证书: DER 走 use_certificate_ASN1, PEM 走 BIO */
+    if (is_der) {
+        if (SSL_CTX_use_certificate_ASN1(s->ctx, cert_len, cert) != 1) {
+            SSL_CTX_free(s->ctx); free(s); return NULL;
+        }
+    } else {
+        BIO *cb = BIO_new_mem_buf(cert, cert_len);
+        X509 *x = cb ? PEM_read_bio_X509(cb, NULL, NULL, NULL) : NULL;
+        if (cb) BIO_free(cb);
+        if (!x || SSL_CTX_use_certificate(s->ctx, x) != 1) {
+            if (x) X509_free(x);
+            SSL_CTX_free(s->ctx); free(s); return NULL;
+        }
+        X509_free(x);
+    }
+
+    /* 私钥: DER 试 EC 再试 RSA, PEM 走 BIO */
+    if (is_der) {
+        if (SSL_CTX_use_PrivateKey_ASN1(EVP_PKEY_EC, s->ctx, key, key_len) != 1 &&
+            SSL_CTX_use_PrivateKey_ASN1(EVP_PKEY_RSA, s->ctx, key, key_len) != 1) {
+            SSL_CTX_free(s->ctx); free(s); return NULL;
+        }
+    } else {
+        BIO *kb = BIO_new_mem_buf(key, key_len);
+        EVP_PKEY *pk = kb ? PEM_read_bio_PrivateKey(kb, NULL, NULL, NULL) : NULL;
+        if (kb) BIO_free(kb);
+        if (!pk || SSL_CTX_use_PrivateKey(s->ctx, pk) != 1) {
+            if (pk) EVP_PKEY_free(pk);
+            SSL_CTX_free(s->ctx); free(s); return NULL;
+        }
+        EVP_PKEY_free(pk);
+    }
+
+    if (SSL_CTX_check_private_key(s->ctx) != 1) {
+        SSL_CTX_free(s->ctx); free(s); return NULL;
+    }
+
+    s->ssl  = SSL_new(s->ctx);
+    s->rbio = BIO_new(BIO_s_mem());
+    s->wbio = BIO_new(BIO_s_mem());
+    BIO_set_write_buf_size(s->wbio, 16 * 1024);
+    SSL_set_bio(s->ssl, s->rbio, s->wbio);
+    SSL_set_accept_state(s->ssl);
+
+    return s;
+}
+
 void async_ssl_attach_socket(async_ssl_t *ssl,
                              async_socket_t *sock) {
     ssl->sock = sock;

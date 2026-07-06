@@ -40,6 +40,10 @@ typedef struct {
 typedef struct {
     const char *url;
     anet_async_ws_t **ws_out;
+    // wss 内存 CA (嵌入式 / NO_FILESYSTEM): 非 NULL 时用内存 CA 校验对端。
+    const unsigned char *ca_mem;
+    int                  ca_mem_len;
+    int                  ca_is_der;
 } anet_async_ws_connect_t;
 
 // 异步WebSocket发送参数结构
@@ -58,6 +62,13 @@ typedef struct {
 
 // 异步连接到WebSocket服务器
 task_t* anet_async_ws_connect(const char *url, anet_async_ws_t **ws);
+
+// 同 anet_async_ws_connect,但 wss 时用内存 CA 校验对端 (嵌入式 / NO_FILESYSTEM)。
+// ca 为 DER 或 PEM buffer (is_der 非 0 表示 DER), 不拷贝, 生命周期须覆盖握手期。
+// ca 可为 NULL (则不校验对端, 仅测试用)。
+task_t* anet_async_ws_connect_mem(const char *url,
+                                  const unsigned char *ca, int ca_len, int is_der,
+                                  anet_async_ws_t **ws);
 
 // 异步发送WebSocket消息
 task_t* anet_async_ws_send(anet_async_ws_t *ws, anet_ws_msg_type_t type, const void *data, size_t len);
@@ -88,6 +99,12 @@ typedef struct {
     int               tls;       // 非 0:先做服务端 TLS 握手 (wss)
     const char       *cert_path; // tls 时的 PEM 证书链路径
     const char       *key_path;  // tls 时的 PEM 私钥路径
+    // 内存证书 (嵌入式 / NO_FILESYSTEM): 非 NULL 时优先于 cert_path/key_path。
+    const unsigned char *cert_mem;
+    int                  cert_mem_len;
+    const unsigned char *key_mem;
+    int                  key_mem_len;
+    int                  cert_is_der;
 } anet_async_ws_accept_t;
 
 // 在一条已 accept 的 async socket 上完成服务端 WS 握手:
@@ -104,6 +121,15 @@ task_t* anet_async_ws_accept_tls(async_socket_t *sock,
                                  const char *cert_path,
                                  const char *key_path,
                                  anet_async_ws_t **ws_out);
+
+// 同 anet_async_ws_accept_tls,但用内存证书 (嵌入式 / NO_FILESYSTEM)。
+// cert/key 为 DER 或 PEM buffer (is_der 非 0 表示 DER), 不拷贝, 生命周期须
+// 覆盖握手期。
+task_t* anet_async_ws_accept_tls_mem(async_socket_t *sock,
+                                     const unsigned char *cert, int cert_len,
+                                     const unsigned char *key, int key_len,
+                                     int is_der,
+                                     anet_async_ws_t **ws_out);
 
 /* ============================================================
  * 同步WebSocket接口
