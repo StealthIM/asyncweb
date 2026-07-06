@@ -473,9 +473,9 @@ typedef struct {
     // 内部状态
     parsed_url_t parsed;
     anet_palsock_t sock;
-    async_socket_t *async_sock;
+    anet_socket_t *async_sock;
     async_ssl_t *async_ssl;
-    async_stream_t *stream;
+    anet_stream_t *stream;
     char *request;
     char *response_data;
     size_t response_capacity;
@@ -552,13 +552,13 @@ task_t* task_arg(anet_async_http_request_) {
     }
 
     // 创建异步socket
-    gen_var(req)->async_sock = async_socket_create(gen_var(req)->sock);
+    gen_var(req)->async_sock = anet_socket_create(gen_var(req)->sock);
     if (!gen_var(req)->async_sock) {
         gen_return(anet_res_status(ANET_ERR));
     }
 
     // 步骤3: 连接
-    gen_var(fut) = async_socket_connect(gen_var(req)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
+    gen_var(fut) = anet_socket_connect(gen_var(req)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
     gen_yield(gen_var(fut));
     if (future_is_rejected(gen_var(fut))) {
         gen_return(anet_res_status(ANET_ERR));
@@ -583,13 +583,13 @@ task_t* task_arg(anet_async_http_request_) {
             gen_return(anet_res_status(ANET_ERR));
         }
 
-        gen_var(req)->stream = async_stream_from_ssl(gen_var(req)->async_ssl);
+        gen_var(req)->stream = anet_stream_from_ssl(gen_var(req)->async_ssl);
         if (!gen_var(req)->stream) {
             gen_return(anet_res_status(ANET_ERR));
         }
 
     } else {
-        gen_var(req)->stream = async_stream_from_socket(gen_var(req)->async_sock);
+        gen_var(req)->stream = anet_stream_from_socket(gen_var(req)->async_sock);
         if (!gen_var(req)->stream) {
             gen_return(anet_res_status(ANET_ERR));
         }
@@ -609,7 +609,7 @@ task_t* task_arg(anet_async_http_request_) {
     }
 
     // 步骤7: 发送请求
-    gen_var(task) = async_stream_write_all(gen_var(req)->stream, gen_var(req)->request, strlen(gen_var(req)->request));
+    gen_var(task) = anet_stream_write_all(gen_var(req)->stream, gen_var(req)->request, strlen(gen_var(req)->request));
     gen_yield_from_task(gen_var(task));
 
     if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -621,7 +621,7 @@ task_t* task_arg(anet_async_http_request_) {
 
     // 步骤8: 读取响应
     while (1) {
-        gen_var(task) = async_stream_read(gen_var(req)->stream, sizeof(gen_var(buffer)), gen_var(buffer));
+        gen_var(task) = anet_stream_read(gen_var(req)->stream, sizeof(gen_var(buffer)), gen_var(buffer));
         gen_yield_from_task(gen_var(task));
         
         gen_var(bytes_read) = (int)anet_code_of(future_result(gen_var(task)->future));
@@ -683,7 +683,7 @@ task_t* task_arg(anet_async_http_request_) {
             // async_ssl 拥有并释放它 attach 的 async_sock。
             async_ssl_destroy(gen_var(req)->async_ssl);
         } else if (gen_var(req)->async_sock) {
-            async_socket_close(gen_var(req)->async_sock);
+            anet_socket_close(gen_var(req)->async_sock);
             free(gen_var(req)->async_sock);
         } else if (anet_palsock_is_valid(gen_var(req)->sock)) {
             anet_palsock_close(gen_var(req)->sock);

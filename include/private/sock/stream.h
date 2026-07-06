@@ -14,35 +14,35 @@ extern "C" {
      * 异步 stream 接口
      * ========================================== */
     
-    typedef struct async_stream async_stream_t;
+    typedef struct async_stream anet_stream_t;
 
     // 基于普通 async socket
-    async_stream_t* async_stream_from_socket(async_socket_t *sock);
+    anet_stream_t* anet_stream_from_socket(anet_socket_t *sock);
 
     // 基于异步 SSL
-    async_stream_t* async_stream_from_ssl(async_ssl_t *ssl);
+    anet_stream_t* anet_stream_from_ssl(async_ssl_t *ssl);
 
     // 关闭 stream
-    task_t* async_stream_close(async_stream_t *s);
+    task_t* anet_stream_close(anet_stream_t *s);
 
     // 同步销毁 stream 及其底层 socket/ssl（不发送 close_notify，用于 teardown）
-    void async_stream_destroy(async_stream_t *s);
+    void anet_stream_destroy(anet_stream_t *s);
 
     // 读至少 1 字节，最多 max_len
-    task_t* async_stream_read(async_stream_t *s, size_t max_len, void *buf);
+    task_t* anet_stream_read(anet_stream_t *s, size_t max_len, void *buf);
 
     // 必须读满 len 字节
-    task_t* async_stream_read_exactly(async_stream_t *s, size_t len, void *buf);
+    task_t* anet_stream_read_exactly(anet_stream_t *s, size_t len, void *buf);
 
     // 读到 delimiter（不包含 delimiter）
     // 返回实际读取长度
-    task_t* async_stream_read_until(async_stream_t *s, char delimiter, void *buf, size_t max_len);
+    task_t* anet_stream_read_until(anet_stream_t *s, char delimiter, void *buf, size_t max_len);
 
     // 写至少 1 字节
-    task_t* async_stream_write(async_stream_t *s, const void *buf, size_t len);
+    task_t* anet_stream_write(anet_stream_t *s, const void *buf, size_t len);
 
     // 写完全部
-    task_t* async_stream_write_all(async_stream_t *s, const void *buf, size_t len);
+    task_t* anet_stream_write_all(anet_stream_t *s, const void *buf, size_t len);
 
     /* ==========================================
      * 同步 stream 接口

@@ -29,24 +29,24 @@
 #define WSS_TEST_MSG "hello secure websocket"
 
 static anet_palsock_t    g_listen_sock;
-static async_listener_t *g_listener;
+static anet_listener_t *g_listener;
 static uint16_t          g_port;
 
 /* --- 服务端协程 --- */
 task_t* task(wss_server_task) {
     gen_dec_vars(
         future_t        *accept_fut;
-        async_socket_t  *conn;
+        anet_socket_t  *conn;
         anet_async_ws_t *ws;
         anet_ws_message_t msg;
         task_t          *task;
     );
     gen_begin(ctx);
 
-    gen_var(accept_fut) = async_socket_accept(g_listener);
+    gen_var(accept_fut) = anet_socket_accept(g_listener);
     gen_yield(gen_var(accept_fut));
     if (future_is_rejected(gen_var(accept_fut))) { printf("server accept failed\n"); exit(1); }
-    gen_var(conn) = (async_socket_t*)future_result(gen_var(accept_fut));
+    gen_var(conn) = (anet_socket_t*)future_result(gen_var(accept_fut));
 
     /* TLS 握手 + WS 升级 */
     gen_var(task) = anet_async_ws_accept_tls(gen_var(conn), "cert.pem", "key.pem", &gen_var(ws));
@@ -148,7 +148,7 @@ int test_wss_server() {
         anet_palsock_getsockname(g_listen_sock, (struct sockaddr*)&bound, &bl);
         g_port = ntohs(bound.sin_port);
     }
-    g_listener = async_listener_create(g_listen_sock);
+    g_listener = anet_listener_create(g_listen_sock);
     printf("wss server listening on 127.0.0.1:%u\n", g_port);
 
     task_t *st = wss_server_task();
@@ -156,7 +156,7 @@ int test_wss_server() {
     task_t *ct = wss_client_task();
     loop_run(ct);
 
-    async_listener_close(g_listener);
+    anet_listener_close(g_listener);
     free(g_listener);
     anet_cleanup();
     return 0;

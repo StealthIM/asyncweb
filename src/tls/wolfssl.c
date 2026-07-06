@@ -76,7 +76,7 @@ struct async_ssl {
     WOLFSSL        *ssl;
     cbuf_t          inbuf;    /* socket → wolfSSL 的密文 */
     cbuf_t          outbuf;   /* wolfSSL → socket 的密文 */
-    async_socket_t *sock;
+    anet_socket_t *sock;
     int             closed;
 };
 
@@ -126,7 +126,7 @@ task_t* task_arg(async_flush_out) {
     gen_var(off) = 0;
 
     while (gen_var(off) < gen_var(ssl)->outbuf.len) {
-        gen_var(fut) = async_socket_send(
+        gen_var(fut) = anet_socket_send(
             gen_var(ssl)->sock,
             (const char*)gen_var(ssl)->outbuf.data + gen_var(off),
             gen_var(ssl)->outbuf.len - gen_var(off)
@@ -155,7 +155,7 @@ task_t* task_arg(async_feed_in) {
 
     gen_var(ssl) = arg;
 
-    gen_var(fut) = async_socket_recv(gen_var(ssl)->sock, gen_var(buf), sizeof(gen_var(buf)));
+    gen_var(fut) = anet_socket_recv(gen_var(ssl)->sock, gen_var(buf), sizeof(gen_var(buf)));
     gen_yield(gen_var(fut));
     gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
 
@@ -335,7 +335,7 @@ async_ssl_t* async_ssl_create_server_mem(const unsigned char *cert, int cert_len
     return s;
 }
 
-void async_ssl_attach_socket(async_ssl_t *ssl, async_socket_t *sock) {
+void async_ssl_attach_socket(async_ssl_t *ssl, anet_socket_t *sock) {
     ssl->sock = sock;
 }
 
@@ -587,7 +587,7 @@ void async_ssl_destroy(async_ssl_t *ssl) {
     free(ssl->outbuf.data);
     /* attach 的 async socket 所有权归我们,释放。 */
     if (ssl->sock) {
-        async_socket_close(ssl->sock);
+        anet_socket_close(ssl->sock);
         free(ssl->sock);
     }
     free(ssl);

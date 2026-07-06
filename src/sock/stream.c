@@ -6,7 +6,7 @@
 #define STREAM_INTERNAL_BUF 4096
 
 struct async_stream {
-    async_socket_t *sock;
+    anet_socket_t *sock;
     async_ssl_t    *ssl;
     uint8_t         read_buf[STREAM_INTERNAL_BUF];
     size_t          read_buf_len;
@@ -17,17 +17,17 @@ struct async_stream {
  * 创建 stream
  * ============================== */
 
-async_stream_t* async_stream_from_socket(async_socket_t *sock)
+anet_stream_t* anet_stream_from_socket(anet_socket_t *sock)
 {
-    async_stream_t *s = calloc(1, sizeof(*s));
+    anet_stream_t *s = calloc(1, sizeof(*s));
     if (!s) return NULL;
     s->sock = sock;
     return s;
 }
 
-async_stream_t* async_stream_from_ssl(async_ssl_t *ssl)
+anet_stream_t* anet_stream_from_ssl(async_ssl_t *ssl)
 {
-    async_stream_t *s = calloc(1, sizeof(*s));
+    anet_stream_t *s = calloc(1, sizeof(*s));
     if (!s) return NULL;
     s->ssl = ssl;
     return s;
@@ -37,15 +37,15 @@ async_stream_t* async_stream_from_ssl(async_ssl_t *ssl)
  * 关闭 stream
  * ============================== */
 
-task_t* task_arg(async_stream_close_) {
+task_t* task_arg(anet_stream_close_) {
     gen_dec_vars(
-        async_stream_t *s;
+        anet_stream_t *s;
         task_t *task;
     );
     gen_begin(ctx);
 
     {
-        async_stream_t *in = (async_stream_t*)arg;
+        anet_stream_t *in = (anet_stream_t*)arg;
         gen_var(s) = in;
     }
 
@@ -56,23 +56,23 @@ task_t* task_arg(async_stream_close_) {
         gen_yield_from_task(gen_var(task));
     }
 
-    // close 只负责优雅关闭协议层；内存释放交给 async_stream_destroy。
+    // close 只负责优雅关闭协议层；内存释放交给 anet_stream_destroy。
     gen_end(0);
 }
 
-task_t* async_stream_close(async_stream_t *s)
+task_t* anet_stream_close(anet_stream_t *s)
 {
-    return async_stream_close_(s);
+    return anet_stream_close_(s);
 }
 
-void async_stream_destroy(async_stream_t *s)
+void anet_stream_destroy(anet_stream_t *s)
 {
     if (!s) return;
     if (s->ssl) {
         async_ssl_destroy(s->ssl);
     }
     if (s->sock) {
-        async_socket_close(s->sock);
+        anet_socket_close(s->sock);
         free(s->sock);
     }
     free(s);
@@ -83,12 +83,12 @@ void async_stream_destroy(async_stream_t *s)
  * ============================== */
 
 typedef struct {
-    async_stream_t *s;
+    anet_stream_t *s;
     void           *buf;
     size_t          len;
 } stream_read_arg_t;
 
-task_t* task_arg(async_stream_read_exactly_) {
+task_t* task_arg(anet_stream_read_exactly_) {
     gen_dec_vars(
         stream_read_arg_t arg_copy;
         size_t            total_read;
@@ -105,7 +105,7 @@ task_t* task_arg(async_stream_read_exactly_) {
     gen_var(total_read) = 0;
 
     while (gen_var(total_read) < gen_var(arg_copy.len)) {
-        gen_var(task) = async_stream_read(gen_var(arg_copy).s, 1, gen_var(arg_copy).buf + gen_var(total_read));
+        gen_var(task) = anet_stream_read(gen_var(arg_copy).s, 1, gen_var(arg_copy).buf + gen_var(total_read));
         gen_yield_from_task(gen_var(task));
 
         int result = (int)anet_code_of(future_result(gen_var(task)->future));
@@ -119,7 +119,7 @@ task_t* task_arg(async_stream_read_exactly_) {
     gen_end(NULL);
 }
 
-task_t *async_stream_read_exactly(async_stream_t *s,
+task_t *anet_stream_read_exactly(anet_stream_t *s,
                                   size_t len,
                                   void *buf)
 {
@@ -128,7 +128,7 @@ task_t *async_stream_read_exactly(async_stream_t *s,
     a->s = s;
     a->buf = buf;
     a->len = len;
-    return async_stream_read_exactly_(a);
+    return anet_stream_read_exactly_(a);
 }
 
 /* ==============================
@@ -136,12 +136,12 @@ task_t *async_stream_read_exactly(async_stream_t *s,
  * ============================== */
 
 typedef struct {
-    async_stream_t *s;
+    anet_stream_t *s;
     void           *buf;
     size_t          max_len;
 } stream_read_single_arg_t;
 
-task_t* task_arg(async_stream_read_) {
+task_t* task_arg(anet_stream_read_) {
     gen_dec_vars(
         stream_read_single_arg_t arg_copy;
         future_t         *fut;
@@ -175,7 +175,7 @@ task_t* task_arg(async_stream_read_) {
         gen_yield_from_task(gen_var(task));
         gen_var(n) = (int)anet_code_of(future_result(gen_var(task)->future));
     } else {
-        gen_var(fut) = async_socket_recv(gen_var(arg_copy.s)->sock, gen_var(arg_copy.buf), gen_var(arg_copy.max_len));
+        gen_var(fut) = anet_socket_recv(gen_var(arg_copy.s)->sock, gen_var(arg_copy.buf), gen_var(arg_copy.max_len));
         gen_yield(gen_var(fut));
         gen_var(n) = (int)anet_code_of(future_result(gen_var(fut)));
     }
@@ -187,14 +187,14 @@ task_t* task_arg(async_stream_read_) {
     gen_end(anet_res_code((intptr_t)gen_var(n)));
 }
 
-task_t *async_stream_read(async_stream_t *s, size_t max_len, void *buf)
+task_t *anet_stream_read(anet_stream_t *s, size_t max_len, void *buf)
 {
     stream_read_single_arg_t *a = malloc(sizeof(*a));
     if (!a) return NULL;
     a->s = s;
     a->buf = buf;
     a->max_len = max_len;
-    return async_stream_read_(a);
+    return anet_stream_read_(a);
 }
 
 /* ==============================
@@ -202,12 +202,12 @@ task_t *async_stream_read(async_stream_t *s, size_t max_len, void *buf)
  * ============================== */
 
 typedef struct {
-    async_stream_t *s;
+    anet_stream_t *s;
     const void     *buf;
     size_t          len;
 } stream_write_arg_t;
 
-task_t* task_arg(async_stream_write_all_) {
+task_t* task_arg(anet_stream_write_all_) {
     gen_dec_vars(
         stream_write_arg_t arg_copy;
         size_t off;
@@ -235,7 +235,7 @@ task_t* task_arg(async_stream_write_all_) {
             gen_yield_from_task(gen_var(task));
             gen_var(n) = (ssize_t)anet_code_of(future_result(gen_var(task)->future));
         } else {
-            gen_var(fut) = async_socket_send(gen_var(arg_copy.s)->sock,
+            gen_var(fut) = anet_socket_send(gen_var(arg_copy.s)->sock,
                                              (uint8_t*)gen_var(arg_copy.buf) + gen_var(off),
                                              remain);
             gen_yield(gen_var(fut));
@@ -253,7 +253,7 @@ task_t* task_arg(async_stream_write_all_) {
     gen_end(NULL);
 }
 
-task_t *async_stream_write_all(async_stream_t *s,
+task_t *anet_stream_write_all(anet_stream_t *s,
                                const void *buf,
                                size_t len)
 {
@@ -262,14 +262,14 @@ task_t *async_stream_write_all(async_stream_t *s,
     a->s = s;
     a->buf = buf;
     a->len = len;
-    return async_stream_write_all_(a);
+    return anet_stream_write_all_(a);
 }
 
 /* ==============================
  * write (single write)
  * ============================== */
 
-task_t* task_arg(async_stream_write_) {
+task_t* task_arg(anet_stream_write_) {
     gen_dec_vars(
         stream_write_arg_t arg_copy;
         future_t *fut;
@@ -291,7 +291,7 @@ task_t* task_arg(async_stream_write_) {
         gen_yield_from_task(gen_var(task));
         gen_var(n) = (ssize_t)anet_code_of(future_result(gen_var(task)->future));
     } else {
-        gen_var(fut) = async_socket_send(gen_var(arg_copy.s)->sock,
+        gen_var(fut) = anet_socket_send(gen_var(arg_copy.s)->sock,
                                          gen_var(arg_copy.buf),
                                          gen_var(arg_copy.len));
         gen_yield(gen_var(fut));
@@ -302,7 +302,7 @@ task_t* task_arg(async_stream_write_) {
     gen_end(NULL);
 }
 
-task_t *async_stream_write(async_stream_t *s,
+task_t *anet_stream_write(anet_stream_t *s,
                            const void *buf,
                            size_t len)
 {
@@ -311,7 +311,7 @@ task_t *async_stream_write(async_stream_t *s,
     a->s = s;
     a->buf = buf;
     a->len = len;
-    return async_stream_write_(a);
+    return anet_stream_write_(a);
 }
 
 /* ==============================
@@ -319,13 +319,13 @@ task_t *async_stream_write(async_stream_t *s,
  * ============================== */
 
 typedef struct {
-    async_stream_t *s;
+    anet_stream_t *s;
     char            delimiter;
     void           *buf;
     size_t          max_len;
 } stream_read_until_arg_t;
 
-task_t* task_arg(async_stream_read_until_) {
+task_t* task_arg(anet_stream_read_until_) {
     gen_dec_vars(
         stream_read_until_arg_t arg_copy;
         task_t   *task;
@@ -343,7 +343,7 @@ task_t* task_arg(async_stream_read_until_) {
     gen_var(total_read) = 0;
 
     while (gen_var(total_read) < gen_var(arg_copy).max_len - 1) {
-        gen_var(task) = async_stream_read(gen_var(arg_copy).s, 1, &gen_var(byte));
+        gen_var(task) = anet_stream_read(gen_var(arg_copy).s, 1, &gen_var(byte));
         gen_yield_from_task(gen_var(task));
 
         int result = (int)anet_code_of(future_result(gen_var(task)->future));
@@ -365,7 +365,7 @@ task_t* task_arg(async_stream_read_until_) {
     gen_end(NULL);
 }
 
-task_t* async_stream_read_until(async_stream_t *s,
+task_t* anet_stream_read_until(anet_stream_t *s,
                                 char delimiter,
                                 void *buf,
                                 size_t max_len)
@@ -376,7 +376,7 @@ task_t* async_stream_read_until(async_stream_t *s,
     a->delimiter = delimiter;
     a->buf = buf;
     a->max_len = max_len;
-    return async_stream_read_until_(a);
+    return anet_stream_read_until_(a);
 }
 
 /* ============================================================

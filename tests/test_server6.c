@@ -24,9 +24,9 @@ task_t* task(server6_test_task) {
     gen_dec_vars(
         anet_palsock_t   listen_sock;
         anet_palsock_t   client_sock;
-        async_listener_t *listener;
-        async_socket_t   *client;
-        async_socket_t   *server_conn;
+        anet_listener_t *listener;
+        anet_socket_t   *client;
+        anet_socket_t   *server_conn;
         future_t         *accept_fut;
         future_t         *connect_fut;
         future_t         *io_fut;
@@ -55,15 +55,15 @@ task_t* task(server6_test_task) {
     gen_var(port) = bound_port6(gen_var(listen_sock));
     printf("listening on [::1]:%u\n", gen_var(port));
 
-    gen_var(listener) = async_listener_create(gen_var(listen_sock));
+    gen_var(listener) = anet_listener_create(gen_var(listen_sock));
 
     /* --- 客户端 socket (AF_INET6) --- */
     gen_var(client_sock) = anet_palsock_create(AF_INET6, SOCK_STREAM, 0, 1);
     if (!anet_palsock_is_valid(gen_var(client_sock))) { printf("v6 client create failed\n"); exit(1); }
-    gen_var(client) = async_socket_create(gen_var(client_sock));
+    gen_var(client) = anet_socket_create(gen_var(client_sock));
 
     /* --- 并发 accept + connect 到 [::1]:port --- */
-    gen_var(accept_fut) = async_socket_accept(gen_var(listener));
+    gen_var(accept_fut) = anet_socket_accept(gen_var(listener));
     {
         struct sockaddr_in6 sin6;
         memset(&sin6, 0, sizeof(sin6));
@@ -71,7 +71,7 @@ task_t* task(server6_test_task) {
         struct in6_addr lo6 = IN6ADDR_LOOPBACK_INIT;
         sin6.sin6_addr = lo6;
         sin6.sin6_port = htons(gen_var(port));
-        gen_var(connect_fut) = async_socket_connect(gen_var(client), (struct sockaddr*)&sin6, sizeof(sin6));
+        gen_var(connect_fut) = anet_socket_connect(gen_var(client), (struct sockaddr*)&sin6, sizeof(sin6));
     }
 
     gen_yield(gen_var(connect_fut));
@@ -79,29 +79,29 @@ task_t* task(server6_test_task) {
 
     gen_yield(gen_var(accept_fut));
     if (future_is_rejected(gen_var(accept_fut))) { printf("v6 accept rejected\n"); exit(1); }
-    gen_var(server_conn) = (async_socket_t*)future_result(gen_var(accept_fut));
+    gen_var(server_conn) = (anet_socket_t*)future_result(gen_var(accept_fut));
     printf("server accepted a v6 connection\n");
 
     /* --- client -> server --- */
-    gen_var(io_fut) = async_socket_send(gen_var(client), TEST_MSG, strlen(TEST_MSG));
+    gen_var(io_fut) = anet_socket_send(gen_var(client), TEST_MSG, strlen(TEST_MSG));
     gen_yield(gen_var(io_fut));
     if (future_is_rejected(gen_var(io_fut))) { printf("v6 client send rejected\n"); exit(1); }
 
     /* --- server recv --- */
     memset(gen_var(recv_buf), 0, sizeof(gen_var(recv_buf)));
-    gen_var(io_fut) = async_socket_recv(gen_var(server_conn), gen_var(recv_buf), sizeof(gen_var(recv_buf)) - 1);
+    gen_var(io_fut) = anet_socket_recv(gen_var(server_conn), gen_var(recv_buf), sizeof(gen_var(recv_buf)) - 1);
     gen_yield(gen_var(io_fut));
     if (future_is_rejected(gen_var(io_fut))) { printf("v6 server recv rejected\n"); exit(1); }
     printf("server received: %s\n", gen_var(recv_buf));
 
     /* --- server echo --- */
-    gen_var(io_fut) = async_socket_send(gen_var(server_conn), gen_var(recv_buf), strlen(gen_var(recv_buf)));
+    gen_var(io_fut) = anet_socket_send(gen_var(server_conn), gen_var(recv_buf), strlen(gen_var(recv_buf)));
     gen_yield(gen_var(io_fut));
     if (future_is_rejected(gen_var(io_fut))) { printf("v6 server echo rejected\n"); exit(1); }
 
     /* --- client recv echo --- */
     memset(gen_var(recv_buf), 0, sizeof(gen_var(recv_buf)));
-    gen_var(io_fut) = async_socket_recv(gen_var(client), gen_var(recv_buf), sizeof(gen_var(recv_buf)) - 1);
+    gen_var(io_fut) = anet_socket_recv(gen_var(client), gen_var(recv_buf), sizeof(gen_var(recv_buf)) - 1);
     gen_yield(gen_var(io_fut));
     if (future_is_rejected(gen_var(io_fut))) { printf("v6 client recv rejected\n"); exit(1); }
     printf("client received echo: %s\n", gen_var(recv_buf));
@@ -112,11 +112,11 @@ task_t* task(server6_test_task) {
     }
 
     /* --- 清理 --- */
-    async_socket_close(gen_var(client));
+    anet_socket_close(gen_var(client));
     free(gen_var(client));
-    async_socket_close(gen_var(server_conn));
+    anet_socket_close(gen_var(server_conn));
     free(gen_var(server_conn));
-    async_listener_close(gen_var(listener));
+    anet_listener_close(gen_var(listener));
     free(gen_var(listener));
 
     printf("IPv6 loopback test passed\n");

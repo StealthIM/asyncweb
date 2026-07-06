@@ -68,7 +68,7 @@ static void async_accept_cb(loop_t *loop,
         return;
     }
 
-    async_socket_t *client = (async_socket_t*)ctx->extra;
+    anet_socket_t *client = (anet_socket_t*)ctx->extra;
 
     // bind 新 socket 到 loop
     loop_bind_handle((void*)client->sock);
@@ -82,9 +82,9 @@ static void async_accept_cb(loop_t *loop,
 // socket 生命周期
 // =======================================================
 
-async_socket_t* async_socket_create(anet_palsock_t sock)
+anet_socket_t* anet_socket_create(anet_palsock_t sock)
 {
-    async_socket_t *s = calloc(1, sizeof(*s));
+    anet_socket_t *s = calloc(1, sizeof(*s));
     s->sock   = sock;
     s->closed = 0;
 
@@ -93,7 +93,7 @@ async_socket_t* async_socket_create(anet_palsock_t sock)
     return s;
 }
 
-void async_socket_close(async_socket_t *s)
+void anet_socket_close(anet_socket_t *s)
 {
     if (!s || s->closed)
         return;
@@ -102,7 +102,7 @@ void async_socket_close(async_socket_t *s)
     anet_palsock_close(s->sock);
 }
 
-anet_palsock_t async_socket_native(async_socket_t *s)
+anet_palsock_t anet_socket_native(anet_socket_t *s)
 {
     return s->sock;
 }
@@ -112,7 +112,7 @@ anet_palsock_t async_socket_native(async_socket_t *s)
 // 单次 async IO
 // =======================================================
 
-future_t* async_socket_recv(async_socket_t *s,
+future_t* anet_socket_recv(anet_socket_t *s,
                             void *buf,
                             size_t len)
 {
@@ -137,7 +137,7 @@ future_t* async_socket_recv(async_socket_t *s,
     return fut;
 }
 
-future_t* async_socket_send(async_socket_t *s,
+future_t* anet_socket_send(anet_socket_t *s,
                             const void *buf,
                             size_t len)
 {
@@ -162,7 +162,7 @@ future_t* async_socket_send(async_socket_t *s,
     return fut;
 }
 
-future_t* async_socket_connect(async_socket_t *s,
+future_t* anet_socket_connect(anet_socket_t *s,
                                const struct sockaddr *addr,
                                int addrlen)
 {
@@ -192,9 +192,9 @@ future_t* async_socket_connect(async_socket_t *s,
 // listener
 // =======================================================
 
-async_listener_t* async_listener_create(anet_palsock_t listen_sock)
+anet_listener_t* anet_listener_create(anet_palsock_t listen_sock)
 {
-    async_listener_t *l = calloc(1, sizeof(*l));
+    anet_listener_t *l = calloc(1, sizeof(*l));
     l->sock   = listen_sock;
     l->closed = 0;
 
@@ -202,7 +202,7 @@ async_listener_t* async_listener_create(anet_palsock_t listen_sock)
     return l;
 }
 
-void async_listener_close(async_listener_t *l)
+void anet_listener_close(anet_listener_t *l)
 {
     if (!l || l->closed)
         return;
@@ -216,12 +216,12 @@ void async_listener_close(async_listener_t *l)
 // accept
 // =======================================================
 
-future_t* async_socket_accept(async_listener_t *listener)
+future_t* anet_socket_accept(anet_listener_t *listener)
 {
     async_op_ctx_t *ctx = calloc(1, sizeof(*ctx));
     ctx->future = future_create();
 
-    async_socket_t *client = calloc(1, sizeof(*client));
+    anet_socket_t *client = calloc(1, sizeof(*client));
 
     ctx->extra = client;
 

@@ -86,25 +86,25 @@ int anet_palsock_listen(anet_palsock_t s, int backlog)
 int anet_palsock_connect(anet_palsock_t s, const struct sockaddr *addr, int addrlen)
 {
     (void)s; (void)addr; (void)addrlen;
-    return -1;   /* 用 async_socket_connect / loop_connect_async */
+    return -1;   /* 用 anet_socket_connect / loop_connect_async */
 }
 
 anet_palsock_t anet_palsock_accept(anet_palsock_t s, struct sockaddr *addr, int *addrlen)
 {
     (void)s; (void)addr; (void)addrlen;
-    return NULL; /* 用 async_socket_accept / loop_accept_async */
+    return NULL; /* 用 anet_socket_accept / loop_accept_async */
 }
 
 int anet_palsock_recv(anet_palsock_t s, void *buf, size_t len, int flags)
 {
     (void)s; (void)buf; (void)len; (void)flags;
-    return -1;   /* 用 async_socket_recv / loop_post_recv */
+    return -1;   /* 用 anet_socket_recv / loop_post_recv */
 }
 
 int anet_palsock_send(anet_palsock_t s, const void *buf, size_t len, int flags)
 {
     (void)s; (void)buf; (void)len; (void)flags;
-    return -1;   /* 用 async_socket_send / loop_post_send */
+    return -1;   /* 用 anet_socket_send / loop_post_send */
 }
 
 int anet_palsock_getsockname(anet_palsock_t s, struct sockaddr *addr, int *addrlen)

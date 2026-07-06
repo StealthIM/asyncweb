@@ -17,7 +17,7 @@
  * ============================================================ */
 
 struct anet_async_ws {
-    async_stream_t *stream;
+    anet_stream_t *stream;
     anet_ws_state_t state;
     char sec_key[64];
     int is_tls;
@@ -441,9 +441,9 @@ typedef struct {
     int port;
     int is_tls;
     anet_palsock_t sock;
-    async_socket_t *async_sock;
+    anet_socket_t *async_sock;
     async_ssl_t *async_ssl;
-    async_stream_t *stream;
+    anet_stream_t *stream;
     char sec_key[64];
     char req[1024];
     char buf[1024];
@@ -522,13 +522,13 @@ task_t* task_arg(anet_async_ws_connect_) {
     }
 
     // 创建异步socket
-    gen_var(conn)->async_sock = async_socket_create(gen_var(conn)->sock);
+    gen_var(conn)->async_sock = anet_socket_create(gen_var(conn)->sock);
     if (!gen_var(conn)->async_sock) {
         gen_return(anet_res_status(ANET_ERR));
     }
 
     // 步骤4: 连接
-    gen_var(fut) = async_socket_connect(gen_var(conn)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
+    gen_var(fut) = anet_socket_connect(gen_var(conn)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
     gen_yield(gen_var(fut));
     if (future_is_rejected(gen_var(fut))) {
         gen_return(anet_res_status(ANET_ERR));
@@ -557,12 +557,12 @@ task_t* task_arg(anet_async_ws_connect_) {
             gen_return(anet_res_status(ANET_ERR));
         }
 
-        gen_var(conn)->stream = async_stream_from_ssl(gen_var(conn)->async_ssl);
+        gen_var(conn)->stream = anet_stream_from_ssl(gen_var(conn)->async_ssl);
         if (!gen_var(conn)->stream) {
             gen_return(anet_res_status(ANET_ERR));
         }
     } else {
-        gen_var(conn)->stream = async_stream_from_socket(gen_var(conn)->async_sock);
+        gen_var(conn)->stream = anet_stream_from_socket(gen_var(conn)->async_sock);
         if (!gen_var(conn)->stream) {
             gen_return(anet_res_status(ANET_ERR));
         }
@@ -590,7 +590,7 @@ task_t* task_arg(anet_async_ws_connect_) {
         "\r\n",
         gen_var(conn)->path, gen_var(conn)->host, gen_var(conn)->port, gen_var(ws)->sec_key);
 
-    gen_var(task) = async_stream_write_all(gen_var(conn)->stream, gen_var(conn)->req, strlen(gen_var(conn)->req));
+    gen_var(task) = anet_stream_write_all(gen_var(conn)->stream, gen_var(conn)->req, strlen(gen_var(conn)->req));
     gen_yield_from_task(gen_var(task));
 
     if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -598,7 +598,7 @@ task_t* task_arg(anet_async_ws_connect_) {
     }
 
     // 步骤8: 验证响应
-    gen_var(task) = async_stream_read_until(gen_var(conn)->stream, '\n', gen_var(conn)->buf, sizeof(gen_var(conn)->buf) - 1);
+    gen_var(task) = anet_stream_read_until(gen_var(conn)->stream, '\n', gen_var(conn)->buf, sizeof(gen_var(conn)->buf) - 1);
     gen_yield_from_task(gen_var(task));
 
     gen_var(len) = (int)anet_code_of(future_result(gen_var(task)->future));
@@ -613,7 +613,7 @@ task_t* task_arg(anet_async_ws_connect_) {
 
     // 步骤9: 读取剩余头部
     while (1) {
-        gen_var(task) = async_stream_read_until(gen_var(conn)->stream, '\n', gen_var(conn)->buf, sizeof(gen_var(conn)->buf) - 1);
+        gen_var(task) = anet_stream_read_until(gen_var(conn)->stream, '\n', gen_var(conn)->buf, sizeof(gen_var(conn)->buf) - 1);
         gen_yield_from_task(gen_var(task));
 
         gen_var(len) = (int)anet_code_of(future_result(gen_var(task)->future));
@@ -652,7 +652,7 @@ task_t* task_arg(anet_async_ws_connect_) {
                 // async_ssl 拥有并释放它 attach 的 async_sock。
                 async_ssl_destroy(gen_var(conn)->async_ssl);
             } else if (gen_var(conn)->async_sock) {
-                async_socket_close(gen_var(conn)->async_sock);
+                anet_socket_close(gen_var(conn)->async_sock);
                 free(gen_var(conn)->async_sock);
             } else if (anet_palsock_is_valid(gen_var(conn)->sock)) {
                 anet_palsock_close(gen_var(conn)->sock);
@@ -771,7 +771,7 @@ task_t* task_arg(anet_async_ws_send_) {
         }
     }
     
-    gen_var(task) = async_stream_write_all(gen_var(send)->ws->stream, gen_var(frame), gen_var(hlen) + gen_var(send)->len);
+    gen_var(task) = anet_stream_write_all(gen_var(send)->ws->stream, gen_var(frame), gen_var(hlen) + gen_var(send)->len);
     gen_yield_from_task(gen_var(task));
 
     free(gen_var(frame));
@@ -841,7 +841,7 @@ task_t* task_arg(anet_async_ws_recv_) {
     }
     
     // 步骤1: 读取帧头
-    gen_var(task) = async_stream_read_exactly(gen_var(recv)->ws->stream, 2, gen_var(recv)->hdr);
+    gen_var(task) = anet_stream_read_exactly(gen_var(recv)->ws->stream, 2, gen_var(recv)->hdr);
     gen_yield_from_task(gen_var(task));
 
     if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -862,7 +862,7 @@ task_t* task_arg(anet_async_ws_recv_) {
     if (gen_var(recv)->opcode == 0x9) {
         // Ping响应
         char pong[2] = { (char)0x8A, 0x00 };
-        gen_var(task) = async_stream_write_all(gen_var(recv)->ws->stream, pong, 2);
+        gen_var(task) = anet_stream_write_all(gen_var(recv)->ws->stream, pong, 2);
         gen_yield_from_task(gen_var(task));
         
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -883,7 +883,7 @@ task_t* task_arg(anet_async_ws_recv_) {
     
     // 步骤2: 读取扩展长度
     if (gen_var(recv)->len == 126) {
-        gen_var(task) = async_stream_read_exactly(gen_var(recv)->ws->stream, 2, gen_var(ext));
+        gen_var(task) = anet_stream_read_exactly(gen_var(recv)->ws->stream, 2, gen_var(ext));
         gen_yield_from_task(gen_var(task));
         
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -898,7 +898,7 @@ task_t* task_arg(anet_async_ws_recv_) {
     
     // 步骤3: 读取掩码
     if (gen_var(recv)->masked) {
-        gen_var(task) = async_stream_read_exactly(gen_var(recv)->ws->stream, 4, gen_var(recv)->mask);
+        gen_var(task) = anet_stream_read_exactly(gen_var(recv)->ws->stream, 4, gen_var(recv)->mask);
         gen_yield_from_task(gen_var(task));
         
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -909,7 +909,7 @@ task_t* task_arg(anet_async_ws_recv_) {
     
     // 步骤4: 读取数据
     gen_var(recv)->msg->data = malloc(gen_var(recv)->len + 1);
-    gen_var(task) = async_stream_read_exactly(gen_var(recv)->ws->stream, gen_var(recv)->len, gen_var(recv)->msg->data);
+    gen_var(task) = anet_stream_read_exactly(gen_var(recv)->ws->stream, gen_var(recv)->len, gen_var(recv)->msg->data);
     gen_yield_from_task(gen_var(task));
     
     if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
@@ -966,13 +966,13 @@ task_t* task_arg(anet_async_ws_close_) {
         gen_var(closef)[0] = 0x88;
         gen_var(closef)[1] = 0x00;
         
-        gen_var(task) = async_stream_write_all(gen_var(ws)->stream, gen_var(closef), 2);
+        gen_var(task) = anet_stream_write_all(gen_var(ws)->stream, gen_var(closef), 2);
         gen_yield_from_task(gen_var(task));
         
         // 不管发送是否成功都继续关闭
     }
     
-    gen_var(task) = async_stream_close(gen_var(ws)->stream);
+    gen_var(task) = anet_stream_close(gen_var(ws)->stream);
     gen_yield_from_task(gen_var(task));
     
     gen_var(ws)->state = ANET_WS_CLOSED;
@@ -1006,7 +1006,7 @@ void anet_async_ws_destroy(anet_async_ws_t *ws) {
     if (ws) {
         // 直接同步释放底层 stream/socket/ssl。不发送 close_notify——
         // 那需要异步 task，销毁函数无法驱动事件循环。
-        async_stream_destroy(ws->stream);
+        anet_stream_destroy(ws->stream);
         free(ws);
     }
 }
@@ -1016,7 +1016,7 @@ void anet_async_ws_destroy(anet_async_ws_t *ws) {
  * ============================================================ */
 
 typedef struct {
-    async_socket_t   *sock;
+    anet_socket_t   *sock;
     anet_async_ws_t **ws_out;
     int               tls;
     const char       *cert_path;
@@ -1028,7 +1028,7 @@ typedef struct {
     int                  cert_is_der;
     /* 内部状态 */
     async_ssl_t      *ssl;       /* wss 时的 TLS 会话 (attach 后拥有 sock) */
-    async_stream_t   *stream;    /* 包裹 sock 或 ssl,握手请求经此读写 */
+    anet_stream_t   *stream;    /* 包裹 sock 或 ssl,握手请求经此读写 */
     char             *buf;       /* 累积的请求字节 */
     size_t            buf_len;
     size_t            buf_cap;
@@ -1068,7 +1068,7 @@ task_t* task_arg(anet_async_ws_accept_) {
 
     /* 步骤0: 建立 stream。wss 先做服务端 TLS 握手,再包 ssl;否则包裸 socket。
        建 stream 后 sock 的所有权归 stream (TLS 时经 ssl) —— 成功/失败都由
-       cleanup 里的 async_stream_destroy 统一收尾,与明文早期失败区分见下。 */
+       cleanup 里的 anet_stream_destroy 统一收尾,与明文早期失败区分见下。 */
     if (gen_var(a)->tls) {
         if (gen_var(a)->cert_mem) {
             gen_var(a)->ssl = async_ssl_create_server_mem(
@@ -1085,18 +1085,18 @@ task_t* task_arg(anet_async_ws_accept_) {
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
             gen_return(anet_res_status(ANET_ERR));
         }
-        gen_var(a)->stream = async_stream_from_ssl(gen_var(a)->ssl);
+        gen_var(a)->stream = anet_stream_from_ssl(gen_var(a)->ssl);
         /* ssl 所有权移入 stream;清空 a->ssl,避免 cleanup 二次销毁。
            (stream 创建失败时 a->ssl 仍非空,由 cleanup 的 ssl 分支收。) */
         if (gen_var(a)->stream) { gen_var(a)->ssl = NULL; }
     } else {
-        gen_var(a)->stream = async_stream_from_socket(gen_var(a)->sock);
+        gen_var(a)->stream = anet_stream_from_socket(gen_var(a)->sock);
     }
     if (!gen_var(a)->stream) { gen_return(anet_res_status(ANET_ERR)); }
 
     /* 步骤1: 读到完整请求头 (\r\n\r\n) */
     while (1) {
-        gen_var(task) = async_stream_read(gen_var(a)->stream, sizeof(gen_var(chunk)), gen_var(chunk));
+        gen_var(task) = anet_stream_read(gen_var(a)->stream, sizeof(gen_var(chunk)), gen_var(chunk));
         gen_yield_from_task(gen_var(task));
         gen_var(n) = (int)anet_code_of(future_result(gen_var(task)->future));
         if (gen_var(n) <= 0) { gen_return(anet_res_status(ANET_ERR)); }
@@ -1143,7 +1143,7 @@ task_t* task_arg(anet_async_ws_accept_) {
         gen_var(ws)->is_server = 1;
         gen_var(ws)->is_tls = gen_var(a)->tls;
 
-        gen_var(task) = async_stream_write_all(gen_var(ws)->stream, gen_var(a)->resp, (size_t)rn);
+        gen_var(task) = anet_stream_write_all(gen_var(ws)->stream, gen_var(a)->resp, (size_t)rn);
         gen_yield_from_task(gen_var(task));
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
             /* 写失败:ws 已接管 stream 所有权,置回 a->stream=NULL 交给下面
@@ -1162,7 +1162,7 @@ task_t* task_arg(anet_async_ws_accept_) {
     gen_cleanup();
     if (gen_var(ws)) {
         /* 写 101 失败:ws 已持有 stream,销毁它 (连带 ssl/sock)。 */
-        async_stream_destroy(gen_var(ws)->stream);
+        anet_stream_destroy(gen_var(ws)->stream);
         free(gen_var(ws));
         gen_var(ws) = NULL;
     }
@@ -1173,7 +1173,7 @@ task_t* task_arg(anet_async_ws_accept_) {
            - 都没建 (calloc 失败等极早期):sock 归调用方,不动。
            stream 已转交 ws/调用方时 a->stream 已置 NULL,这里不重复释放。 */
         if (gen_var(a)->stream) {
-            async_stream_destroy(gen_var(a)->stream);
+            anet_stream_destroy(gen_var(a)->stream);
         } else if (gen_var(a)->ssl) {
             async_ssl_destroy(gen_var(a)->ssl);
         }
@@ -1185,7 +1185,7 @@ task_t* task_arg(anet_async_ws_accept_) {
     gen_end(NULL);
 }
 
-task_t* anet_async_ws_accept(async_socket_t *sock, anet_async_ws_t **ws_out) {
+task_t* anet_async_ws_accept(anet_socket_t *sock, anet_async_ws_t **ws_out) {
     if (!sock || !ws_out) return NULL;
     anet_async_ws_accept_t *req = calloc(1, sizeof(*req));
     if (!req) return NULL;
@@ -1194,7 +1194,7 @@ task_t* anet_async_ws_accept(async_socket_t *sock, anet_async_ws_t **ws_out) {
     return anet_async_ws_accept_(req);
 }
 
-task_t* anet_async_ws_accept_tls(async_socket_t *sock,
+task_t* anet_async_ws_accept_tls(anet_socket_t *sock,
                                  const char *cert_path,
                                  const char *key_path,
                                  anet_async_ws_t **ws_out) {
@@ -1209,7 +1209,7 @@ task_t* anet_async_ws_accept_tls(async_socket_t *sock,
     return anet_async_ws_accept_(req);
 }
 
-task_t* anet_async_ws_accept_tls_mem(async_socket_t *sock,
+task_t* anet_async_ws_accept_tls_mem(anet_socket_t *sock,
                                      const unsigned char *cert, int cert_len,
                                      const unsigned char *key, int key_len,
                                      int is_der,

@@ -16,7 +16,7 @@
 
 struct anet_http_server {
     anet_palsock_t       listen_sock;
-    async_listener_t    *listener;
+    anet_listener_t    *listener;
     anet_http_handler_t  handler;
     void                *userdata;
     uint16_t             port;
@@ -40,9 +40,9 @@ struct anet_http_server {
 
 typedef struct {
     anet_http_server_t *server;
-    async_socket_t     *conn;         /* accept 到的裸 socket */
+    anet_socket_t     *conn;         /* accept 到的裸 socket */
     async_ssl_t        *ssl;          /* TLS 会话 (明文时 NULL);attach 后拥有 conn */
-    async_stream_t     *stream;       /* 包裹 conn 或 ssl,统一读写 */
+    anet_stream_t     *stream;       /* 包裹 conn 或 ssl,统一读写 */
     char               *buf;          /* 累积的请求字节 (NUL 结尾) */
     size_t              buf_len;
     size_t              buf_cap;
@@ -170,9 +170,9 @@ task_t* task_arg(server_conn_task_) {
         if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
             gen_return(anet_res_status(ANET_ERR));
         }
-        gen_var(c)->stream = async_stream_from_ssl(gen_var(c)->ssl);
+        gen_var(c)->stream = anet_stream_from_ssl(gen_var(c)->ssl);
     } else {
-        gen_var(c)->stream = async_stream_from_socket(gen_var(c)->conn);
+        gen_var(c)->stream = anet_stream_from_socket(gen_var(c)->conn);
     }
     if (!gen_var(c)->stream) {
         gen_return(anet_res_status(ANET_ERR));
@@ -188,7 +188,7 @@ task_t* task_arg(server_conn_task_) {
         while (!(gen_var(c)->buf_len > 0 &&
                  request_is_complete(gen_var(c)->buf, gen_var(c)->buf_len,
                                      &gen_var(head_len), &gen_var(content_len)))) {
-            gen_var(task) = async_stream_read(gen_var(c)->stream, sizeof(gen_var(chunk)), gen_var(chunk));
+            gen_var(task) = anet_stream_read(gen_var(c)->stream, sizeof(gen_var(chunk)), gen_var(chunk));
             gen_yield_from_task(gen_var(task));
             gen_var(n) = (int)anet_code_of(future_result(gen_var(task)->future));
             if (gen_var(n) <= 0) {
@@ -263,7 +263,7 @@ task_t* task_arg(server_conn_task_) {
                 memcpy(gen_var(c)->out + hn, sresp.body, blen);
             }
 
-            gen_var(task) = async_stream_write_all(gen_var(c)->stream, gen_var(c)->out, (size_t)hn + blen);
+            gen_var(task) = anet_stream_write_all(gen_var(c)->stream, gen_var(c)->out, (size_t)hn + blen);
             gen_yield_from_task(gen_var(task));
             int wr = (int)anet_code_of(future_result(gen_var(task)->future));
             free(gen_var(c)->out);
@@ -288,17 +288,17 @@ task_t* task_arg(server_conn_task_) {
 
     gen_cleanup();
     if (gen_var(c)) {
-        /* stream 只是壳;async_stream_destroy 释放它并连带底层 ssl 或 socket。
+        /* stream 只是壳;anet_stream_destroy 释放它并连带底层 ssl 或 socket。
            TLS 时 ssl 拥有 conn;明文时 stream 直接持有 conn。两种情况都由
            stream_destroy 收尾,故不在此单独 close/free conn。 */
         if (gen_var(c)->stream) {
-            async_stream_destroy(gen_var(c)->stream);
+            anet_stream_destroy(gen_var(c)->stream);
         } else {
             /* stream 尚未建立(极早失败):自行收 ssl 或 conn */
             if (gen_var(c)->ssl) {
                 async_ssl_destroy(gen_var(c)->ssl);
             } else if (gen_var(c)->conn) {
-                async_socket_close(gen_var(c)->conn);
+                anet_socket_close(gen_var(c)->conn);
                 free(gen_var(c)->conn);
             }
         }
@@ -318,7 +318,7 @@ task_t* task_arg(server_accept_task_) {
     gen_dec_vars(
         anet_http_server_t *server;
         future_t           *accept_fut;
-        async_socket_t     *conn;
+        anet_socket_t     *conn;
         conn_ctx_t         *cc;
         task_t             *conn_task;
     );
@@ -330,14 +330,14 @@ task_t* task_arg(server_accept_task_) {
     gen_var(server) = (anet_http_server_t*)gen_userdata();
 
     while (1) {
-        gen_var(accept_fut) = async_socket_accept(gen_var(server)->listener);
+        gen_var(accept_fut) = anet_socket_accept(gen_var(server)->listener);
         gen_yield(gen_var(accept_fut));
 
         if (gen_var(server)->stop) {
             /* stop() 通过 self-connect 唤醒了我们:关掉这条唤醒连接后退出 */
             if (future_is_done(gen_var(accept_fut))) {
-                async_socket_t *s = (async_socket_t*)future_result(gen_var(accept_fut));
-                if (s) { async_socket_close(s); free(s); }
+                anet_socket_t *s = (anet_socket_t*)future_result(gen_var(accept_fut));
+                if (s) { anet_socket_close(s); free(s); }
             }
             break;
         }
@@ -345,12 +345,12 @@ task_t* task_arg(server_accept_task_) {
             break;
         }
 
-        gen_var(conn) = (async_socket_t*)future_result(gen_var(accept_fut));
+        gen_var(conn) = (anet_socket_t*)future_result(gen_var(accept_fut));
 
         /* 每连接派生一个分离协程:完成后由 task driver 自动销毁 */
         gen_var(cc) = calloc(1, sizeof(conn_ctx_t));
         if (!gen_var(cc)) {
-            async_socket_close(gen_var(conn));
+            anet_socket_close(gen_var(conn));
             free(gen_var(conn));
             continue;
         }
@@ -358,7 +358,7 @@ task_t* task_arg(server_accept_task_) {
         gen_var(cc)->conn = gen_var(conn);
         gen_var(conn_task) = server_conn_task_(gen_var(cc));
         if (!gen_var(conn_task)) {
-            async_socket_close(gen_var(conn));
+            anet_socket_close(gen_var(conn));
             free(gen_var(conn));
             free(gen_var(cc));
             continue;
@@ -408,7 +408,7 @@ anet_http_server_t* anet_http_server_create(uint16_t port,
     anet_http_server_t *srv = calloc(1, sizeof(*srv));
     if (!srv) { anet_palsock_close(s); return NULL; }
     srv->listen_sock = s;
-    srv->listener = async_listener_create(s);
+    srv->listener = anet_listener_create(s);
     srv->handler = handler;
     srv->userdata = userdata;
     srv->port = actual;
@@ -481,7 +481,7 @@ void anet_http_server_stop(anet_http_server_t *server) {
 void anet_http_server_destroy(anet_http_server_t *server) {
     if (!server) return;
     if (server->listener) {
-        async_listener_close(server->listener);
+        anet_listener_close(server->listener);
         free(server->listener);
     }
     free(server->cert_path);

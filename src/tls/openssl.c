@@ -35,7 +35,7 @@ struct async_ssl {
     SSL            *ssl;
     BIO            *rbio;
     BIO            *wbio;
-    async_socket_t *sock;
+    anet_socket_t *sock;
     int             closed;
 };
 
@@ -96,7 +96,7 @@ task_t *task_arg(async_flush_wbio) {
 
         gen_var(off) = 0;
         while (gen_var(off) < gen_var(n)) {
-            gen_var(fut) = async_socket_send(
+            gen_var(fut) = anet_socket_send(
                 gen_var(ssl)->sock,
                 gen_var(buf) + gen_var(off), gen_var(n) - gen_var(off)
             );
@@ -123,7 +123,7 @@ task_t* task_arg(async_feed_rbio) {
 
     gen_var(ssl) = arg;
 
-    gen_var(fut) = async_socket_recv(
+    gen_var(fut) = anet_socket_recv(
         gen_var(ssl)->sock,
         gen_var(buf), sizeof(gen_var(buf))
     );
@@ -322,7 +322,7 @@ async_ssl_t* async_ssl_create_server_mem(const unsigned char *cert, int cert_len
 }
 
 void async_ssl_attach_socket(async_ssl_t *ssl,
-                             async_socket_t *sock) {
+                             anet_socket_t *sock) {
     ssl->sock = sock;
 }
 
@@ -598,7 +598,7 @@ void async_ssl_destroy(async_ssl_t *ssl) {
     SSL_CTX_free(ssl->ctx);
     // The attached async socket's ownership passed to us; release it.
     if (ssl->sock) {
-        async_socket_close(ssl->sock);
+        anet_socket_close(ssl->sock);
         free(ssl->sock);
     }
     free(ssl);

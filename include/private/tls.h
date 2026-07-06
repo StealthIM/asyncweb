@@ -48,7 +48,7 @@ extern "C" {
 
     // 绑定 socket（必须是 async_socket）
     void async_ssl_attach_socket(async_ssl_t *ssl,
-                                 async_socket_t *sock);
+                                 anet_socket_t *sock);
 
     // TLS 握手
     task_t* async_ssl_handshake(async_ssl_t *ssl);
