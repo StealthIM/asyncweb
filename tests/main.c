@@ -13,6 +13,7 @@ int test_https_server();
 int test_keepalive();
 int test_ws_server();
 int test_wss_server();
+int test_server_adversarial();
 
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -53,6 +54,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "wss_server") == 0) {
         return test_wss_server();
+    }
+    if (strcmp(argv[1], "server_adversarial") == 0) {
+        return test_server_adversarial();
     }
 
     printf("Unknown test: %s\n", argv[1]);

@@ -192,6 +192,7 @@ if(ASYNCWEB_STANDALONE)
             tests/test_keepalive.c
             tests/test_ws_server.c
             tests/test_wss_server.c
+            tests/test_server_adversarial.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
     # (低层 socket/stream API 现在都在公开 <asyncweb/...> 里, 经 asyncweb PUBLIC
@@ -210,6 +211,7 @@ if(ASYNCWEB_STANDALONE)
     add_test_with_dir(test_keepalive test_asyncweb keepalive)
     add_test_with_dir(test_ws_server test_asyncweb ws_server)
     add_test_with_dir(test_wss_server test_asyncweb wss_server)
+    add_test_with_dir(test_server_adversarial test_asyncweb server_adversarial)
 endif()
 
 # ============================================================
