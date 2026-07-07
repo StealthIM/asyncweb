@@ -15,9 +15,6 @@ set_property(CACHE ASYNCWEB_OS_BACKEND PROPERTY STRINGS posix win lwip)
 set(ASYNCWEB_SSL_BACKEND "" CACHE STRING "Choose SSL backend: openssl, wolfssl")
 set_property(CACHE ASYNCWEB_SSL_BACKEND PROPERTY STRINGS openssl wolfssl)
 
-set(ASYNCWEB_WS "" CACHE STRING "Choose websocket: on/off")
-set_property(CACHE ASYNCWEB_WS PROPERTY STRINGS on off)
-
 
 # ---- 获取 libcoro: 优先系统已装 (find_package), 否则 FetchContent 源码 ----
 # 若父项目已经 add_subdirectory/FetchContent 了 libcoro (target 已存在), 直接用。
@@ -90,11 +87,6 @@ elseif(ASYNCWEB_OS_BACKEND STREQUAL "lwip")
     )
 else()
     message(FATAL_ERROR "No valid OS backend selected.")
-endif()
-if(ASYNCWEB_WS STREQUAL "off")
-    list(APPEND SRC_FILES
-            src/sync/websocket/none.c
-    )
 endif()
 if(ASYNCWEB_SSL_BACKEND STREQUAL "openssl")
     list(APPEND SRC_FILES

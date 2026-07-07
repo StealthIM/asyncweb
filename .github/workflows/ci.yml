@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  # host 测试: posix × {openssl, wolfssl} × ws {on,off}, ASan 跑测试。
+  # host 测试: posix × {openssl, wolfssl}, ASan 跑测试。
   # libcoro 由 asyncweb 的 find_package-or-FetchContent 自动拉取 (未装 => 源码)。
   # test_sync_http / test_async_http 依赖外部网络 (postman-echo), CI 里排除。
   test:
@@ -15,7 +15,6 @@ jobs:
       fail-fast: false
       matrix:
         ssl: [openssl, wolfssl]
-        ws: [on, off]
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenSSL (openssl backend)
@@ -27,7 +26,6 @@ jobs:
           -DASYNCWEB_STANDALONE=ON
           -DASYNCWEB_OS_BACKEND=posix
           -DASYNCWEB_SSL_BACKEND=${{ matrix.ssl }}
-          -DASYNCWEB_WS=${{ matrix.ws }}
           -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
       - name: Build
@@ -55,7 +53,7 @@ jobs:
       - name: Install asyncweb
         run: |
           cmake -B build \
-            -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl -DASYNCWEB_WS=on \
+            -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl \
             -DCMAKE_PREFIX_PATH="$PWD/_inst" -DCMAKE_INSTALL_PREFIX="$PWD/_inst"
           cmake --build build --target install -j
       - name: Build examples via find_package

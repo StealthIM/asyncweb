@@ -27,27 +27,28 @@ asyncweb 是一个用 C11 编写的异步 HTTP / HTTPS / WebSocket 库,客户端
 |------|------|------|
 | `ASYNCWEB_OS_BACKEND`  | `posix` / `win` / `lwip` | OS socket 层。`lwip` 要求 libcoro 也以 `LIBCORO_OS_BACKEND=lwip` 构建 |
 | `ASYNCWEB_SSL_BACKEND` | `openssl` / `wolfssl`    | TLS 后端 |
-| `ASYNCWEB_WS`          | `on` / `off`             | 是否启用 WebSocket |
 | `ASYNCWEB_STANDALONE`  | `ON` / `OFF`             | 是否构建测试(默认 `OFF`) |
+
+WebSocket 始终可用(用不到时链接期自动剔除,无需编译期开关)。
 
 ## 构建
 
 ```bash
-# POSIX + OpenSSL + WebSocket
-cmake -B build -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl -DASYNCWEB_WS=on
+# POSIX + OpenSSL
+cmake -B build -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl
 cmake --build build
 ```
 
 ```bash
 # wolfSSL 后端
-cmake -B build -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=wolfssl -DASYNCWEB_WS=on
+cmake -B build -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=wolfssl
 cmake --build build
 ```
 
 ### 安装 / find_package / pkg-config
 
 ```bash
-cmake -B build -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl -DASYNCWEB_WS=on \
+cmake -B build -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl \
       -DCMAKE_INSTALL_PREFIX=/your/prefix
 cmake --build build --target install
 ```
