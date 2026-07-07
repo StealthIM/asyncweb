@@ -21,9 +21,16 @@ set_property(CACHE ASYNCWEB_WS PROPERTY STRINGS on off)
 
 # ---- 获取 libcoro: 优先系统已装 (find_package), 否则 FetchContent 源码 ----
 # 若父项目已经 add_subdirectory/FetchContent 了 libcoro (target 已存在), 直接用。
+#
+# ASYNCWEB_LIBCORO_INTERNAL: libcoro 是否源码内建 (裸 target, 不可随 asyncweb
+# 导出)。find_package 得到的是 IMPORTED target, 可导出 => OFF; FetchContent/
+# 上层已存在的裸 target 不可进 export set => ON, 此时跳过 install/export。
+set(ASYNCWEB_LIBCORO_INTERNAL ON)
 if(NOT TARGET libcoro AND NOT TARGET libcoro::libcoro)
     find_package(libcoro QUIET)
-    if(NOT libcoro_FOUND)
+    if(libcoro_FOUND)
+        set(ASYNCWEB_LIBCORO_INTERNAL OFF)   # IMPORTED, 可导出
+    else()
         include(FetchContent)
         FetchContent_Declare(
                 libcoro
@@ -31,14 +38,17 @@ if(NOT TARGET libcoro AND NOT TARGET libcoro::libcoro)
                 GIT_TAG master
         )
         if(NOT DEFINED LIBCORO_OS_BACKEND)
+            # 注意: 必须写进 cache —— libcoro 把 LIBCORO_OS_BACKEND 声明为 cache
+            # 变量, 普通变量会被它的 set(...CACHE) 在子作用域里清掉 (CMP0126)。
             if(WIN32)
-                set(LIBCORO_OS_BACKEND "win")
+                set(_aw_lc_backend "win")
             elseif(UNIX)
                 message(WARNING "Use default epoll backend. You can switch to select backend if needed.")
-                set(LIBCORO_OS_BACKEND "epoll")
+                set(_aw_lc_backend "epoll")
             else()
                 message(FATAL_ERROR "No valid OS backend. Please choose one of them.")
             endif()
+            set(LIBCORO_OS_BACKEND "${_aw_lc_backend}" CACHE STRING "libcoro OS backend" FORCE)
         endif()
         FetchContent_MakeAvailable(libcoro)
     endif()
@@ -206,12 +216,13 @@ endif()
 # 安装 / 导出 (find_package(asyncweb) + pkg-config)
 #
 # 前提: 所有 PUBLIC 依赖都是可导出的 (find_package 得到的 IMPORTED target,
-# 或已装的 libcoro)。wolfSSL 走 FetchContent 源码内建时不可导出, 此时跳过
-# install 并告警 —— 要装 asyncweb 请用系统 wolfSSL (或 openssl 后端)。
+# 或已装的 libcoro)。libcoro 或 wolfSSL 走 FetchContent 源码内建时不可导出
+# (built target 不能进 export set), 此时跳过 install 并告警 —— 要装 asyncweb
+# 请先装 libcoro, 且用系统 wolfSSL (或 openssl 后端)。
 # ============================================================
-if(ASYNCWEB_WOLFSSL_INTERNAL)
-    message(STATUS "asyncweb: wolfSSL 源码内建 (非系统安装), 跳过 install/export。"
-                   " 装 asyncweb 请用系统 wolfSSL 或 openssl 后端。")
+if(ASYNCWEB_LIBCORO_INTERNAL OR ASYNCWEB_WOLFSSL_INTERNAL)
+    message(STATUS "asyncweb: 依赖源码内建 (libcoro 或 wolfSSL 非系统安装), 跳过 install/export。"
+                   " 装 asyncweb 请先装 libcoro, 并用系统 wolfSSL 或 openssl 后端。")
 else()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -256,4 +267,4 @@ configure_file(
         ${CMAKE_CURRENT_BINARY_DIR}/asyncweb.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/asyncweb.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
-endif()  # NOT ASYNCWEB_WOLFSSL_INTERNAL
+endif()  # NOT (ASYNCWEB_LIBCORO_INTERNAL OR ASYNCWEB_WOLFSSL_INTERNAL)
