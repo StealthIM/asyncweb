@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  # host 测试: posix × {openssl, wolfssl} × ws {on,off}, ASan 跑测试。
+  # libcoro 由 asyncweb 的 find_package-or-FetchContent 自动拉取 (未装 => 源码)。
+  # test_sync_http / test_async_http 依赖外部网络 (postman-echo), CI 里排除。
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ssl: [openssl, wolfssl]
+        ws: [on, off]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenSSL (openssl backend)
+        if: matrix.ssl == 'openssl'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Configure
+        run: >
+          cmake -B build
+          -DASYNCWEB_STANDALONE=ON
+          -DASYNCWEB_OS_BACKEND=posix
+          -DASYNCWEB_SSL_BACKEND=${{ matrix.ssl }}
+          -DASYNCWEB_WS=${{ matrix.ws }}
+          -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (exclude external-network)
+        working-directory: build
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+        run: ctest --output-on-failure -E 'test_sync_http|test_async_http'
+
+  # 安装 + 下游 find_package smoke test (openssl 后端, 用 examples/)。
+  # 先装 libcoro, 再装 asyncweb, 再用 find_package(asyncweb) 构建 examples。
+  install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Install libcoro
+        run: |
+          git clone --depth 1 https://github.com/StealthIM/libcoro.git /tmp/libcoro
+          cmake -S /tmp/libcoro -B /tmp/libcoro/build \
+            -DLIBCORO_OS_BACKEND=epoll -DCMAKE_INSTALL_PREFIX="$PWD/_inst"
+          cmake --build /tmp/libcoro/build --target install -j
+      - name: Install asyncweb
+        run: |
+          cmake -B build \
+            -DASYNCWEB_OS_BACKEND=posix -DASYNCWEB_SSL_BACKEND=openssl -DASYNCWEB_WS=on \
+            -DCMAKE_PREFIX_PATH="$PWD/_inst" -DCMAKE_INSTALL_PREFIX="$PWD/_inst"
+          cmake --build build --target install -j
+      - name: Build examples via find_package
+        run: |
+          cmake -S examples -B examples/build -DCMAKE_PREFIX_PATH="$PWD/_inst"
+          cmake --build examples/build -j
