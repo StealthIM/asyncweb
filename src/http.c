@@ -370,13 +370,13 @@ anet_status_t anet_sync_http_request(const char *method,
         int bytes_read = sync_stream_read(stream, sizeof(buffer), buffer);
         if (bytes_read <= 0) break;
         
-        // 扩展响应缓冲区
-        if (total_read + bytes_read > response_capacity) {
+        // 扩展响应缓冲区 (多留 1 字节给结尾 NUL, 使 strstr 不越界)
+        if (total_read + bytes_read + 1 > response_capacity) {
             size_t new_capacity = response_capacity ? response_capacity * 2 : 4096;
-            while (new_capacity < total_read + bytes_read) {
+            while (new_capacity < total_read + bytes_read + 1) {
                 new_capacity *= 2;
             }
-            
+
             char *new_data = realloc(response_data, new_capacity);
             if (!new_data) {
                 free(response_data);
@@ -384,15 +384,16 @@ anet_status_t anet_sync_http_request(const char *method,
                 anet_palsock_cleanup();
                 return ANET_ERR;
             }
-            
+
             response_data = new_data;
             response_capacity = new_capacity;
         }
-        
-        // 复制数据
+
+        // 复制数据并保持 NUL 结尾 (下面 strstr / parse_response 依赖它)
         memcpy(response_data + total_read, buffer, bytes_read);
         total_read += bytes_read;
-        
+        response_data[total_read] = '\0';
+
         // 完整性检查基于分隔符,不解析 Content-Length
         if (total_read > 4 && strstr(response_data, "\r\n\r\n")) {
             // 检查是否有Content-Length
@@ -634,10 +635,10 @@ task_t* task_arg(anet_async_http_request_) {
             gen_return(anet_res_status(ANET_ERR));
         }
 
-        // 扩展响应缓冲区
-        if (gen_var(req)->total_read + gen_var(bytes_read) > gen_var(req)->response_capacity) {
+        // 扩展响应缓冲区 (多留 1 字节给结尾 NUL, 使 strstr 不越界)
+        if (gen_var(req)->total_read + gen_var(bytes_read) + 1 > gen_var(req)->response_capacity) {
             size_t new_capacity = gen_var(req)->response_capacity ? gen_var(req)->response_capacity * 2 : 4096;
-            while (new_capacity < gen_var(req)->total_read + gen_var(bytes_read)) {
+            while (new_capacity < gen_var(req)->total_read + gen_var(bytes_read) + 1) {
                 new_capacity *= 2;
             }
 
@@ -650,9 +651,10 @@ task_t* task_arg(anet_async_http_request_) {
             gen_var(req)->response_capacity = new_capacity;
         }
 
-        // 复制数据
+        // 复制数据并保持 NUL 结尾 (下面 strstr / parse_response 依赖它)
         memcpy(gen_var(req)->response_data + gen_var(req)->total_read, gen_var(buffer), gen_var(bytes_read));
         gen_var(req)->total_read += gen_var(bytes_read);
+        gen_var(req)->response_data[gen_var(req)->total_read] = '\0';
 
         // 检查是否读取完整
         if (gen_var(req)->total_read > 4 && strstr(gen_var(req)->response_data, "\r\n\r\n")) {

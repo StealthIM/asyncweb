@@ -15,6 +15,7 @@ int test_ws_server();
 int test_wss_server();
 int test_server_adversarial();
 int test_server_concurrent();
+int test_client_robustness();
 
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -61,6 +62,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "server_concurrent") == 0) {
         return test_server_concurrent();
+    }
+    if (strcmp(argv[1], "client_robustness") == 0) {
+        return test_client_robustness();
     }
 
     printf("Unknown test: %s\n", argv[1]);
