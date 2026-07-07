@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+# asyncweb 的 PUBLIC 依赖: libcoro (必) + 构建时选的 SSL 后端。下游需重新找到。
+include(CMakeFindDependencyMacro)
+
+find_dependency(libcoro)
+
+set(_asyncweb_ssl "@ASYNCWEB_SSL_BACKEND_USED@")
+if(_asyncweb_ssl STREQUAL "openssl")
+    find_dependency(OpenSSL)
+elseif(_asyncweb_ssl STREQUAL "wolfssl")
+    # wolfSSL 无标准 find module; 若系统装了带 config 的 wolfssl 则找它,
+    # 否则假定 target 已可见 (源码内建场景)。
+    find_dependency(wolfssl QUIET)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/asyncwebTargets.cmake")
+
+check_required_components(asyncweb)

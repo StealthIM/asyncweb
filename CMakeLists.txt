@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
-project(asyncweb C)
+project(asyncweb VERSION 1.0.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 
 
 # Option
-option(ASYNCWEB_STANDALONE "Build asyncweb standalone" OFF)
+# ASYNCWEB_STANDALONE 只控制"是否编测试"; libcoro 的获取由下面的
+# find_package-or-fetch 逻辑自动处理 (装了就 find_package, 没装就 FetchContent)。
+option(ASYNCWEB_STANDALONE "Build asyncweb tests" OFF)
 
 set(ASYNCWEB_OS_BACKEND "" CACHE STRING "Choose OS backend: posix, win, lwip")
 set_property(CACHE ASYNCWEB_OS_BACKEND PROPERTY STRINGS posix win lwip)
@@ -17,25 +19,35 @@ set(ASYNCWEB_WS "" CACHE STRING "Choose websocket: on/off")
 set_property(CACHE ASYNCWEB_WS PROPERTY STRINGS on off)
 
 
-if(ASYNCWEB_STANDALONE)
-    # Libraries
-    include(FetchContent)
-    FetchContent_Declare(
-            libcoro
-            GIT_REPOSITORY https://github.com/StealthIM/libcoro.git
-            GIT_TAG master
-    )
-    if(NOT DEFINED LIBCORO_OS_BACKEND)
-        if(WIN32)
-            set(LIBCORO_OS_BACKEND "win")
-        elseif(UNIX)
-            message(WARNING "Use default epoll backend. You can switch to select backend if needed.")
-            set(LIBCORO_OS_BACKEND "epoll")
-        else()
-            message(FATAL_ERROR "No valid OS backend. Please choose one of them.")
+# ---- 获取 libcoro: 优先系统已装 (find_package), 否则 FetchContent 源码 ----
+# 若父项目已经 add_subdirectory/FetchContent 了 libcoro (target 已存在), 直接用。
+if(NOT TARGET libcoro AND NOT TARGET libcoro::libcoro)
+    find_package(libcoro QUIET)
+    if(NOT libcoro_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(
+                libcoro
+                GIT_REPOSITORY https://github.com/StealthIM/libcoro.git
+                GIT_TAG master
+        )
+        if(NOT DEFINED LIBCORO_OS_BACKEND)
+            if(WIN32)
+                set(LIBCORO_OS_BACKEND "win")
+            elseif(UNIX)
+                message(WARNING "Use default epoll backend. You can switch to select backend if needed.")
+                set(LIBCORO_OS_BACKEND "epoll")
+            else()
+                message(FATAL_ERROR "No valid OS backend. Please choose one of them.")
+            endif()
         endif()
+        FetchContent_MakeAvailable(libcoro)
     endif()
-    FetchContent_MakeAvailable(libcoro)
+endif()
+
+# 统一用 namespaced alias: 无论 libcoro 来自 find_package (libcoro::libcoro)
+# 还是 FetchContent/add_subdirectory (裸 target libcoro), 下面都链 libcoro::libcoro。
+if(TARGET libcoro AND NOT TARGET libcoro::libcoro)
+    add_library(libcoro::libcoro ALIAS libcoro)
 endif()
 
 add_library(asyncweb)
@@ -92,28 +104,33 @@ elseif(ASYNCWEB_SSL_BACKEND STREQUAL "wolfssl")
     list(APPEND SRC_FILES
             src/tls/wolfssl.c
     )
-    # wolfSSL 通过 FetchContent 拉取 (可用 FETCHCONTENT_SOURCE_DIR_WOLFSSL 指向本地
-    # 源码免网络)。开启后端所需特性:TLS1.3、自定义 IO 回调、IP alt-name (测试证书
-    # 用 IP:127.0.0.1 SAN);关掉 examples/crypttests/install 以缩短构建。
-    include(FetchContent)
-    set(WOLFSSL_TLS13     "yes" CACHE STRING "" FORCE)
-    set(WOLFSSL_IP_ALT_NAME "yes" CACHE STRING "" FORCE)
-    set(WOLFSSL_EXAMPLES  "no"  CACHE STRING "" FORCE)
-    set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "" FORCE)
-    set(WOLFSSL_INSTALL   "no"  CACHE STRING "" FORCE)
-    FetchContent_Declare(
-            wolfssl
-            GIT_REPOSITORY https://github.com/wolfSSL/wolfssl.git
-            GIT_TAG v5.9.2-stable
-    )
-    FetchContent_MakeAvailable(wolfssl)
-    # 交叉编译到 Windows 时,wolfSSL 的 CMake 不会自动定义 USE_WINDOWS_API,
-    # 于是种子源退回 POSIX /dev/urandom——在 Wine 下 wc_InitRng 会卡死。
-    # 显式打开,让它用 CryptGenRandom (Wine 有实现)。
-    if(WIN32)
-        target_compile_definitions(wolfssl PUBLIC USE_WINDOWS_API)
+    # 优先系统已装的 wolfSSL (find_package → IMPORTED target, 可随 asyncweb 导出);
+    # 没装则 FetchContent 源码 (built target, 不可导出 → asyncweb 转为不可安装)。
+    find_package(wolfssl QUIET)
+    if(wolfssl_FOUND)
+        target_link_libraries(asyncweb PUBLIC wolfssl)
+        set(ASYNCWEB_WOLFSSL_INTERNAL OFF)
+    else()
+        include(FetchContent)
+        set(WOLFSSL_TLS13     "yes" CACHE STRING "" FORCE)
+        set(WOLFSSL_IP_ALT_NAME "yes" CACHE STRING "" FORCE)
+        set(WOLFSSL_EXAMPLES  "no"  CACHE STRING "" FORCE)
+        set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "" FORCE)
+        set(WOLFSSL_INSTALL   "no"  CACHE STRING "" FORCE)
+        FetchContent_Declare(
+                wolfssl
+                GIT_REPOSITORY https://github.com/wolfSSL/wolfssl.git
+                GIT_TAG v5.9.2-stable
+        )
+        FetchContent_MakeAvailable(wolfssl)
+        # 交叉编译到 Windows 时,wolfSSL 的 CMake 不会自动定义 USE_WINDOWS_API,
+        # 于是种子源退回 POSIX /dev/urandom——在 Wine 下 wc_InitRng 会卡死。
+        if(WIN32)
+            target_compile_definitions(wolfssl PUBLIC USE_WINDOWS_API)
+        endif()
+        target_link_libraries(asyncweb PUBLIC wolfssl)
+        set(ASYNCWEB_WOLFSSL_INTERNAL ON)   # 源码内建, 不可导出安装
     endif()
-    target_link_libraries(asyncweb PUBLIC wolfssl)
 else()
     message(FATAL_ERROR "No valid SSL backend selected.")
 endif()
@@ -130,7 +147,18 @@ target_include_directories(asyncweb
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(asyncweb PUBLIC libcoro)
+target_link_libraries(asyncweb PUBLIC libcoro::libcoro)
+
+# 后端一致性: asyncweb lwip PAL 依赖 libcoro 以 lwip 后端构建 (提供 lwIP 头/符号
+# + LIBCORO_LWIP 宏)。把原来隐式的耦合显式化, 不一致直接报错而非编译到一半崩。
+if(ASYNCWEB_OS_BACKEND STREQUAL "lwip")
+    get_target_property(_lc_defs libcoro::libcoro INTERFACE_COMPILE_DEFINITIONS)
+    if(NOT _lc_defs MATCHES "LIBCORO_LWIP")
+        message(FATAL_ERROR
+            "ASYNCWEB_OS_BACKEND=lwip 需要 libcoro 以 LIBCORO_OS_BACKEND=lwip 构建 "
+            "(当前 libcoro 未定义 LIBCORO_LWIP)。请一致选择 lwip 后端。")
+    endif()
+endif()
 
 if(ASYNCWEB_STANDALONE)
     function(add_test_with_dir test_name executable arg)
@@ -156,8 +184,8 @@ if(ASYNCWEB_STANDALONE)
             tests/test_wss_server.c
     )
     target_link_libraries(test_asyncweb PRIVATE asyncweb)
-    # keep-alive 测试需要低层 async socket/stream API 建可复用连接
-    target_include_directories(test_asyncweb PRIVATE include/private)
+    # (低层 socket/stream API 现在都在公开 <asyncweb/...> 里, 经 asyncweb PUBLIC
+    #  include 传递, 测试无需额外 include 路径。)
     # TLS 测试用预生成证书 (与 TLS 后端解耦);注入绝对路径,测试 chdir 后仍能拷贝
     target_compile_definitions(test_asyncweb PRIVATE
             CERTS_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/certs")
@@ -173,3 +201,59 @@ if(ASYNCWEB_STANDALONE)
     add_test_with_dir(test_ws_server test_asyncweb ws_server)
     add_test_with_dir(test_wss_server test_asyncweb wss_server)
 endif()
+
+# ============================================================
+# 安装 / 导出 (find_package(asyncweb) + pkg-config)
+#
+# 前提: 所有 PUBLIC 依赖都是可导出的 (find_package 得到的 IMPORTED target,
+# 或已装的 libcoro)。wolfSSL 走 FetchContent 源码内建时不可导出, 此时跳过
+# install 并告警 —— 要装 asyncweb 请用系统 wolfSSL (或 openssl 后端)。
+# ============================================================
+if(ASYNCWEB_WOLFSSL_INTERNAL)
+    message(STATUS "asyncweb: wolfSSL 源码内建 (非系统安装), 跳过 install/export。"
+                   " 装 asyncweb 请用系统 wolfSSL 或 openssl 后端。")
+else()
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+# 产物名 libasyncweb.* (target 名已是 asyncweb, 前缀 lib 得 libasyncweb, 符合惯例)。
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/asyncweb
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(TARGETS asyncweb EXPORT asyncwebTargets
+        ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(EXPORT asyncwebTargets
+        FILE asyncwebTargets.cmake
+        NAMESPACE asyncweb::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asyncweb)
+
+# Config 需重新找到 PUBLIC 依赖: libcoro (必) + SSL 后端。记录构建时选的后端。
+set(ASYNCWEB_SSL_BACKEND_USED "${ASYNCWEB_SSL_BACKEND}")
+configure_package_config_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/asyncwebConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/asyncwebConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asyncweb)
+write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/asyncwebConfigVersion.cmake
+        VERSION 1.0.0
+        COMPATIBILITY SameMajorVersion)
+install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/asyncwebConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/asyncwebConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asyncweb)
+
+# pkg-config
+if(ASYNCWEB_SSL_BACKEND STREQUAL "openssl")
+    set(ASYNCWEB_PC_REQUIRES "libcoro openssl")
+else()
+    set(ASYNCWEB_PC_REQUIRES "libcoro")   # wolfssl 无标准 .pc, 靠 Config 侧处理
+endif()
+configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/asyncweb.pc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/asyncweb.pc @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/asyncweb.pc
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+endif()  # NOT ASYNCWEB_WOLFSSL_INTERNAL
