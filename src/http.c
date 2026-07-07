@@ -696,6 +696,12 @@ task_t* task_arg(anet_async_http_request_) {
     gen_end(NULL);
 }
 
+// 公开入口: 内部协程 anet_async_http_request_ 直接把 req 当 arg 用 (借用,
+// 调用方须保证 req 及其指向的字符串在 task 跑完前存活)。
+task_t* anet_async_http_request(anet_async_http_request_t *req) {
+    return anet_async_http_request_(req);
+}
+
 /* ============================================================
  * 流式 (SSE) 客户端实现
  * ============================================================ */
