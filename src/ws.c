@@ -434,6 +434,7 @@ typedef struct {
     const unsigned char *ca_mem;
     int                  ca_mem_len;
     int                  ca_is_der;
+    const char         **extra_headers;
 
     // 内部状态
     char host[256];
@@ -480,6 +481,7 @@ task_t* task_arg(anet_async_ws_connect_) {
         gen_var(conn)->ca_mem = in->ca_mem;
         gen_var(conn)->ca_mem_len = in->ca_mem_len;
         gen_var(conn)->ca_is_der = in->ca_is_der;
+        gen_var(conn)->extra_headers = in->extra_headers;
         free(in);
         
         // 解析URL
@@ -579,16 +581,37 @@ task_t* task_arg(anet_async_ws_connect_) {
     gen_var(ws)->is_tls = gen_var(conn)->is_tls;
     generate_websocket_key(gen_var(ws)->sec_key);
 
-    // 步骤7: 发送握手
-    snprintf(gen_var(conn)->req, sizeof(gen_var(conn)->req),
-        "GET %s HTTP/1.1\r\n"
-        "Host: %s:%d\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Key: %s\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        "\r\n",
-        gen_var(conn)->path, gen_var(conn)->host, gen_var(conn)->port, gen_var(ws)->sec_key);
+    // 步骤7: 发送握手 (先拼固定头, 再追加额外头, 最后空行结束)
+    {
+        int off = snprintf(gen_var(conn)->req, sizeof(gen_var(conn)->req),
+            "GET %s HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Version: 13\r\n",
+            gen_var(conn)->path, gen_var(conn)->host, gen_var(conn)->port, gen_var(ws)->sec_key);
+        if (off < 0 || (size_t)off >= sizeof(gen_var(conn)->req)) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        if (gen_var(conn)->extra_headers) {
+            for (int h = 0; gen_var(conn)->extra_headers[h]; h++) {
+                int n = snprintf(gen_var(conn)->req + off, sizeof(gen_var(conn)->req) - off,
+                                 "%s\r\n", gen_var(conn)->extra_headers[h]);
+                if (n < 0 || (size_t)(off + n) >= sizeof(gen_var(conn)->req)) {
+                    gen_return(anet_res_status(ANET_ERR));   // 头过长, 溢出
+                }
+                off += n;
+            }
+        }
+        // 结束空行
+        if ((size_t)off + 2 >= sizeof(gen_var(conn)->req)) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        gen_var(conn)->req[off++] = '\r';
+        gen_var(conn)->req[off++] = '\n';
+        gen_var(conn)->req[off] = '\0';
+    }
 
     gen_var(task) = anet_stream_write_all(gen_var(conn)->stream, gen_var(conn)->req, strlen(gen_var(conn)->req));
     gen_yield_from_task(gen_var(task));
@@ -687,6 +710,14 @@ task_t* anet_async_ws_connect_mem(const char *url,
     req->ca_mem_len = ca_len;
     req->ca_is_der = is_der;
 
+    return anet_async_ws_connect_(req);
+}
+
+task_t* anet_async_ws_connect_ex(const anet_async_ws_connect_t *in) {
+    if (!in) return NULL;
+    anet_async_ws_connect_t *req = calloc(1, sizeof(*req));
+    if (!req) return NULL;
+    *req = *in;   /* 拷贝字段; extra_headers/ca_mem 指针不深拷 (调用方保生命周期) */
     return anet_async_ws_connect_(req);
 }
 

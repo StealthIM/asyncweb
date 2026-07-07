@@ -40,6 +40,33 @@ task_t* anet_async_http_request(anet_async_http_request_t *req);
 // 简化的异步GET请求
 task_t* anet_async_http_get(const char *url, anet_async_http_response_t *response);
 
+/* ============================================================
+ * 流式 (Server-Sent Events) 客户端
+ *
+ * 用于 text/event-stream 长连接: 服务端持续推 "data:" 行, 每个事件在收到时
+ * 立即交付, 不等整条响应结束 (普通 anet_async_http_* 会攒完整 body 才返回,
+ * 对常驻不关的 SSE 流会永不返回)。
+ *
+ * 底层用 libcoro 的 gen_emit: 流式请求 task 边 await socket 读取、边把每个
+ * 事件 gen_emit 出去, 驱动器路由给下面的 on_event 回调。消费是回调式 (异步
+ * 生成器无法用 gen_for 同步迭代)。事件在回调返回后即失效, 需留存请自行拷贝。
+ * ============================================================ */
+
+// 一个 SSE 事件 (一条 "data:" 行去掉前缀后的内容)
+typedef struct {
+    const char *data;   // 事件数据 (NUL 结尾), 仅回调内有效
+    size_t      len;    // data 字节数 (不含结尾 NUL)
+} anet_sse_event_t;
+
+// SSE 事件回调。每收到一个 data: 事件调用一次。
+typedef void (*anet_sse_cb_t)(const anet_sse_event_t *ev, void *userdata);
+
+// 发起一个流式 (SSE) 请求。参数同 anet_async_http_request_t (method/host/port/
+// use_tls/path/headers/body), 但 response 字段忽略 —— 数据经 on_event 交付。
+// 返回 task; task future 完成 (ANET_OK/ANET_ERR) 表示流结束 (对端关闭或出错)。
+task_t* anet_async_http_stream(anet_async_http_request_t *req,
+                               anet_sse_cb_t on_event, void *userdata);
+
 // 简化的异步POST请求
 task_t* anet_async_http_post(const char *url, const char *content_type, const char *body, anet_async_http_response_t *response);
 

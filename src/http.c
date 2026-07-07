@@ -696,6 +696,227 @@ task_t* task_arg(anet_async_http_request_) {
     gen_end(NULL);
 }
 
+/* ============================================================
+ * 流式 (SSE) 客户端实现
+ * ============================================================ */
+
+// 流式请求内部状态 (连接部分同 async_http_internal_t, 另加 SSE 行解析)
+typedef struct {
+    const char   *method;
+    const char   *host;
+    uint16_t      port;
+    int           use_tls;
+    const char   *path;
+    const char  **headers;
+    const char   *body;
+    anet_sse_cb_t on_event;
+    void         *userdata;
+
+    // 连接状态
+    anet_palsock_t sock;
+    anet_socket_t *async_sock;
+    async_ssl_t   *async_ssl;
+    anet_stream_t *stream;
+    char          *request;
+
+    // SSE 行解析: 累积一行, 遇 '\n' 处理。跨 header/body 都按行扫,
+    // header 行不以 "data:" 开头故被忽略, 天然跳过响应头。
+    char          *linebuf;
+    size_t         linebuf_len;
+    size_t         linebuf_cap;
+} stream_http_internal_t;
+
+// on_emit 桥接: 驱动器把 gen_emit 的 anet_sse_event_t* 交到这里, 转调用户回调。
+static void stream_emit_bridge(void *item, void *userdata) {
+    stream_http_internal_t *st = (stream_http_internal_t*)userdata;
+    if (st->on_event) {
+        st->on_event((const anet_sse_event_t*)item, st->userdata);
+    }
+}
+
+// 往行缓冲追加一个字节, 保持 NUL 结尾。失败返回 -1。
+static int sse_linebuf_push(stream_http_internal_t *st, char c) {
+    if (st->linebuf_len + 2 > st->linebuf_cap) {
+        size_t ncap = st->linebuf_cap ? st->linebuf_cap * 2 : 256;
+        char *nb = realloc(st->linebuf, ncap);
+        if (!nb) return -1;
+        st->linebuf = nb;
+        st->linebuf_cap = ncap;
+    }
+    st->linebuf[st->linebuf_len++] = c;
+    st->linebuf[st->linebuf_len] = '\0';
+    return 0;
+}
+
+task_t* task_arg(anet_async_http_stream_) {
+    gen_dec_vars(
+        stream_http_internal_t *st;
+        future_t         *fut;
+        future_t         *resolve_fut;
+        task_t           *task;
+        struct sockaddr_storage addr;
+        int               addr_len;
+        char              buffer[HTTP_BUFFER_SIZE];
+        int               bytes_read;
+        int               i;
+        anet_sse_event_t  ev;   /* 跨 gen_emit 存活 (data 指向持久 linebuf) */
+    );
+    gen_begin(ctx);
+
+    {
+        /* 本 task 由 task_run 顶层驱动 (emit 不能穿 gen_yield_from, 必须顶层),
+         * 首次 gen_send 的 arg 为 NULL —— 从 userdata 取参数, 不能用 arg。 */
+        stream_http_internal_t *in = (stream_http_internal_t*)gen_userdata();
+        gen_var(st) = in;   /* 已由 anet_async_http_stream 堆分配并填好 */
+        gen_var(st)->sock = -1;
+    }
+
+    // 解析地址
+    gen_var(resolve_fut) = anet_palsock_resolve_async(gen_var(st)->host, AF_UNSPEC);
+    if (!gen_var(resolve_fut)) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+    gen_yield(gen_var(resolve_fut));
+    {
+        anet_resolve_result_t *r = (anet_resolve_result_t*)future_result(gen_var(resolve_fut));
+        if (!r || r->ok != 0) {
+            free(r);
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        gen_var(addr) = r->addr;
+        gen_var(addr_len) = r->addr_len;
+        free(r);
+    }
+    if (gen_var(addr).ss_family == AF_INET) {
+        ((struct sockaddr_in*)&gen_var(addr))->sin_port = htons(gen_var(st)->port);
+    } else if (gen_var(addr).ss_family == AF_INET6) {
+        ((struct sockaddr_in6*)&gen_var(addr))->sin6_port = htons(gen_var(st)->port);
+    }
+
+    // 建 socket + 连接
+    gen_var(st)->sock = anet_palsock_create(gen_var(addr).ss_family, SOCK_STREAM, 0, 1);
+    if (!anet_palsock_is_valid(gen_var(st)->sock)) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+    gen_var(st)->async_sock = anet_socket_create(gen_var(st)->sock);
+    if (!gen_var(st)->async_sock) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+    gen_var(fut) = anet_socket_connect(gen_var(st)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
+    gen_yield(gen_var(fut));
+    if (future_is_rejected(gen_var(fut))) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+
+    // TLS (wss/https 流)
+    if (gen_var(st)->use_tls) {
+        gen_var(st)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(st)->host);
+        if (!gen_var(st)->async_ssl) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        async_ssl_attach_socket(gen_var(st)->async_ssl, gen_var(st)->async_sock);
+        gen_var(task) = async_ssl_handshake(gen_var(st)->async_ssl);
+        gen_yield_from_task(gen_var(task));
+        if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
+            gen_return(anet_res_status(ANET_ERR));
+        }
+        gen_var(st)->stream = anet_stream_from_ssl(gen_var(st)->async_ssl);
+    } else {
+        gen_var(st)->stream = anet_stream_from_socket(gen_var(st)->async_sock);
+    }
+    if (!gen_var(st)->stream) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+
+    // 发请求
+    gen_var(st)->request = create_request_string(
+        gen_var(st)->method, gen_var(st)->host, gen_var(st)->port,
+        gen_var(st)->path, gen_var(st)->headers, gen_var(st)->body);
+    if (!gen_var(st)->request) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+    gen_var(task) = anet_stream_write_all(gen_var(st)->stream, gen_var(st)->request, strlen(gen_var(st)->request));
+    gen_yield_from_task(gen_var(task));
+    if (anet_code_of(future_result(gen_var(task)->future)) != 0) {
+        gen_return(anet_res_status(ANET_ERR));
+    }
+    free(gen_var(st)->request);
+    gen_var(st)->request = NULL;
+
+    // 流式读取: 循环读, 按行喂解析器, 每个 "data:" 行 gen_emit 一个事件。
+    while (1) {
+        gen_var(task) = anet_stream_read(gen_var(st)->stream, sizeof(gen_var(buffer)), gen_var(buffer));
+        gen_yield_from_task(gen_var(task));
+        gen_var(bytes_read) = (int)anet_code_of(future_result(gen_var(task)->future));
+        if (gen_var(bytes_read) <= 0) {
+            // 对端关闭或出错 —— 流正常结束。
+            gen_return(anet_res_status(ANET_OK));
+        }
+
+        for (gen_var(i) = 0; gen_var(i) < gen_var(bytes_read); gen_var(i)++) {
+            char c = gen_var(buffer)[gen_var(i)];
+            if (c == '\n') {
+                // 一行完成: 去掉结尾 '\r', 判断是否 data: 行。
+                char *line = gen_var(st)->linebuf;
+                size_t llen = gen_var(st)->linebuf_len;
+                if (llen > 0 && line[llen-1] == '\r') { line[--llen] = '\0'; }
+                if (llen >= 5 && strncmp(line, "data:", 5) == 0) {
+                    char *d = line + 5;
+                    while (*d == ' ') d++;   // 去 "data:" 后可选空格
+                    gen_var(ev).data = d;
+                    gen_var(ev).len = strlen(d);
+                    gen_emit(&gen_var(ev));   // 交付事件 (回调内有效)
+                }
+                gen_var(st)->linebuf_len = 0;
+                if (gen_var(st)->linebuf) gen_var(st)->linebuf[0] = '\0';
+            } else {
+                if (sse_linebuf_push(gen_var(st), c) != 0) {
+                    gen_return(anet_res_status(ANET_ERR));
+                }
+            }
+        }
+    }
+
+    gen_cleanup();
+    if (gen_var(st)) {
+        free(gen_var(st)->request);
+        free(gen_var(st)->linebuf);
+        free(gen_var(st)->stream);   // 壳
+        if (gen_var(st)->async_ssl) {
+            async_ssl_destroy(gen_var(st)->async_ssl);
+        } else if (gen_var(st)->async_sock) {
+            anet_socket_close(gen_var(st)->async_sock);
+            free(gen_var(st)->async_sock);
+        } else if (anet_palsock_is_valid(gen_var(st)->sock)) {
+            anet_palsock_close(gen_var(st)->sock);
+        }
+        free(gen_var(st));
+        gen_var(st) = NULL;
+    }
+    gen_end(NULL);
+}
+
+task_t* anet_async_http_stream(anet_async_http_request_t *req,
+                               anet_sse_cb_t on_event, void *userdata) {
+    if (!req) return NULL;
+    stream_http_internal_t *st = calloc(1, sizeof(*st));
+    if (!st) return NULL;
+    st->method   = req->method;
+    st->host     = req->host;
+    st->port     = req->port;
+    st->use_tls  = req->use_tls;
+    st->path     = req->path;
+    st->headers  = req->headers;
+    st->body     = req->body;
+    st->on_event = on_event;
+    st->userdata = userdata;
+
+    task_t *t = anet_async_http_stream_(st);
+    if (!t) { free(st); return NULL; }
+    task_set_on_emit(t, stream_emit_bridge, st);
+    return t;
+}
+
 // 简化的异步GET请求
 task_t* task_arg(anet_async_http_get_) {
     gen_dec_vars(

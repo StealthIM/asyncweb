@@ -44,6 +44,9 @@ typedef struct {
     const unsigned char *ca_mem;
     int                  ca_mem_len;
     int                  ca_is_der;
+    // 额外握手请求头 (如 "Authorization: Bearer xxx"): NULL 结尾的字符串数组,
+    // 每项不含结尾 CRLF (库自动加)。NULL 表示无额外头。生命周期须覆盖握手期。
+    const char        **extra_headers;
 } anet_async_ws_connect_t;
 
 // 异步WebSocket发送参数结构
@@ -69,6 +72,11 @@ task_t* anet_async_ws_connect(const char *url, anet_async_ws_t **ws);
 task_t* anet_async_ws_connect_mem(const char *url,
                                   const unsigned char *ca, int ca_len, int is_der,
                                   anet_async_ws_t **ws);
+
+// 完整参数版: 支持额外握手请求头 (如 Authorization)。req 由调用方栈上或堆上
+// 提供, 库内部拷贝所需字段; 但 extra_headers 指向的字符串数组不拷贝, 生命周期
+// 须覆盖握手期。返回 task。
+task_t* anet_async_ws_connect_ex(const anet_async_ws_connect_t *req);
 
 // 异步发送WebSocket消息
 task_t* anet_async_ws_send(anet_async_ws_t *ws, anet_ws_msg_type_t type, const void *data, size_t len);
