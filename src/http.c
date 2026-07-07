@@ -393,7 +393,7 @@ anet_status_t anet_sync_http_request(const char *method,
         memcpy(response_data + total_read, buffer, bytes_read);
         total_read += bytes_read;
         
-        // 检查是否读取完整（简单检查，实际应该根据Content-Length）
+        // 完整性检查基于分隔符,不解析 Content-Length
         if (total_read > 4 && strstr(response_data, "\r\n\r\n")) {
             // 检查是否有Content-Length
             const char *headers_end = strstr(response_data, "\r\n\r\n");

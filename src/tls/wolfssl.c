@@ -12,8 +12,8 @@
  *   - send 回调:把密文追加进 outbuf,总是"接收"
  *   - 协程 pump: flush_out (把 outbuf 发到 async socket)、
  *                feed_in  (从 async socket 收一段进 inbuf)
- * 这套结构和 openssl.c 的 async_flush_wbio/async_feed_rbio 一一对应,
- * 握手/读/写/关闭的协程骨架照搬。
+ * 这套结构与 openssl.c 的 async_flush_wbio/async_feed_rbio 一一对应,
+ * 握手/读/写/关闭的协程骨架相同。
  * ============================================================ */
 
 /* host 构建走 autoconf 生成的 options.h; 裸机/嵌入式用 -DWOLFSSL_USER_SETTINGS

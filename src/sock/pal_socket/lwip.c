@@ -1,5 +1,5 @@
 /*
- * asyncweb socket PAL —— lwIP 后端 (阶段 1: UNIX host port)。
+ * asyncweb socket PAL —— lwIP 后端 (基于 UNIX host 的 lwIP socket 模式)。
  *
  * 基本是 posix.c 换 lwip_ 前缀。socket/sockaddr/DNS 全走 lwIP 命名空间
  * (见 pal_socket.h 的 LIBCORO_LWIP 分支)。errno 仍是系统 TLS errno

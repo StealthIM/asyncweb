@@ -1,5 +1,5 @@
 /*
- * asyncweb socket PAL —— 裸机 raw lwIP 后端 (阶段 2b, NO_SYS=1)。
+ * asyncweb socket PAL —— 裸机 raw lwIP 后端 (NO_SYS=1)。
  *
  * 和 lwip.c (socket 模式) 的根本差异: 没有 lwip_socket()/fd。anet_palsock_t
  * 是 void* (raw_conn_t* 的 loop handle)。这里只做:
@@ -8,7 +8,7 @@
  *   - DNS: 走 lwIP 原生异步 dns_gethostbyname (回调挂进 loop, 零线程)。裸机
  *     没有可切分的线程池, 阻塞 getaddrinfo 也不存在 (LWIP_NETCONN=0)。
  *
- * 不提供 sync IO (connect/accept/recv/send 的阻塞版) —— 裸机决策: 只支持
+ * 不提供 sync IO (connect/accept/recv/send 的阻塞版) —— 只支持
  * loop 级异步 API。这些函数返回错误/无效值, 上层裸机路径不该调它们。
  */
 
