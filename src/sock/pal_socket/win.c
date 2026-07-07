@@ -1,5 +1,5 @@
-#include "../../include/private/sock/pal_socket.h"
-#include "libcoro.h"
+#include <asyncweb/palsock.h>
+#include <libcoro/libcoro.h>
 
 #include <ws2tcpip.h>
 #include <windows.h>

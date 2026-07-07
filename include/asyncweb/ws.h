@@ -1,8 +1,8 @@
 #pragma once
 
 #include <stddef.h>
-#include "sock/stream.h"
-#include "common.h"
+#include <asyncweb/stream.h>
+#include <asyncweb/common.h>
 
 #ifdef __cplusplus
 extern "C" {

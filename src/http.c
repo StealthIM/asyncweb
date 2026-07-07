@@ -1,13 +1,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "http.h"
+#include <asyncweb/http.h>
 
 #include <openssl/ssl.h>
 
-#include "tls.h"
-#include "sock/pal_socket.h"
-#include "libcoro.h"
+#include <asyncweb_internal/tls.h>
+#include <asyncweb/palsock.h>
+#include <libcoro/libcoro.h>
 
 #define HTTP_BUFFER_SIZE 8192
 #define HTTP_MAX_HEADERS 64

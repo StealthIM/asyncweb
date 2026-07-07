@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 /* sockaddr_in / htons 等由 asyncweb.h -> pal_socket.h 按平台提供。 */
-#include "libcoro.h"
-#include "asyncweb.h"
+#include <libcoro/libcoro.h>
+#include <asyncweb/asyncweb.h>
 
 /*
  * WebSocket 服务端端到端测试:

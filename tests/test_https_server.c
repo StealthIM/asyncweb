@@ -11,8 +11,8 @@
 #  define make_dir(p) mkdir((p), 0700)
 #  define change_dir(p) chdir(p)
 #endif
-#include "libcoro.h"
-#include "asyncweb.h"
+#include <libcoro/libcoro.h>
+#include <asyncweb/asyncweb.h>
 #include "test_certs.h"
 
 /*

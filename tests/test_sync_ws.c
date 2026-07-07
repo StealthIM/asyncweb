@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "asyncweb.h"
+#include <asyncweb/asyncweb.h>
 
 int test_sync_ws() {
     // 初始化网络库

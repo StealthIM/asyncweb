@@ -2,9 +2,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "pal_socket.h"
-#include "libcoro.h"
-#include "../common.h"
+#include <asyncweb/palsock.h>
+#include <libcoro/libcoro.h>
+#include <asyncweb/common.h>
 
 #ifdef __cplusplus
 extern "C" {

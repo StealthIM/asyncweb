@@ -2,11 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "libcoro.h"
-#include "asyncweb.h"
-#include "sock/pal_socket.h"
-#include "sock/future_socket.h"
-#include "sock/stream.h"
+#include <libcoro/libcoro.h>
+#include <asyncweb/asyncweb.h>
+#include <asyncweb/palsock.h>
+#include <asyncweb/socket.h>
+#include <asyncweb/stream.h>
 
 /*
  * HTTP keep-alive 端到端测试:

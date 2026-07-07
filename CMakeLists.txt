@@ -123,9 +123,11 @@ target_sources(asyncweb PRIVATE ${SRC_FILES})
 
 target_include_directories(asyncweb
         PUBLIC
-        include/public
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
         PRIVATE
-        include/private
+        # 内部头 (<asyncweb_internal/...>): 仅库自身编译可见, 不安装。
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(asyncweb PUBLIC libcoro)

@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 /* sockaddr_in6 / htons 等由 asyncweb.h -> pal_socket.h 按平台提供。 */
-#include "libcoro.h"
-#include "asyncweb.h"
+#include <libcoro/libcoro.h>
+#include <asyncweb/asyncweb.h>
 
 /*
  * IPv6 回环测试:验证整条 socket/bind/listen/accept/connect/recv/send 在

@@ -1,13 +1,13 @@
-#include "ws.h"
-#include "tls.h"
-#include "tools.h"
-#include "sock/stream.h"
-#include "sock/future_socket.h"
+#include <asyncweb/ws.h>
+#include <asyncweb_internal/tls.h>
+#include <asyncweb_internal/tools.h>
+#include <asyncweb/stream.h>
+#include <asyncweb/socket.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
-#include "libcoro.h"
+#include <libcoro/libcoro.h>
 
 // RFC6455 magic GUID appended to Sec-WebSocket-Key before hashing.
 #define WS_ACCEPT_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"

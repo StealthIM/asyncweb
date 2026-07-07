@@ -1,9 +1,9 @@
 #pragma once
 
 #include <stddef.h>
-#include "libcoro.h"
-#include "sock/future_socket.h"
-#include "sock/pal_socket.h"
+#include <libcoro/libcoro.h>
+#include <asyncweb/socket.h>
+#include <asyncweb/palsock.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -2,13 +2,17 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "../tls.h"
-#include "future_socket.h"
-#include "pal_socket.h"
+#include <asyncweb/socket.h>
+#include <asyncweb/palsock.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+    /* SSL 会话类型是内部 TLS 层 (asyncweb_internal/tls.h) 的, 这里只作不透明
+     * 指针出现在 from_ssl/get_ssl 签名里 —— 前向声明即可, 不暴露 TLS 头。 */
+    typedef struct async_ssl async_ssl_t;
+    typedef struct sync_ssl  sync_ssl_t;
 
     /* ==========================================
      * 异步 stream 接口

@@ -6,8 +6,8 @@
  * (lwipopts 用 LWIP_ERRNO_STDINCLUDE, lwip 错误码映射到 <errno.h>)。
  */
 
-#include "sock/pal_socket.h"
-#include "libcoro.h"
+#include <asyncweb/palsock.h>
+#include <libcoro/libcoro.h>
 
 #include <errno.h>
 #include <string.h>

@@ -12,9 +12,10 @@
  * loop 级异步 API。这些函数返回错误/无效值, 上层裸机路径不该调它们。
  */
 
-#include "sock/pal_socket.h"
-#include "libcoro.h"
-#include "loop.h"
+#include <asyncweb/palsock.h>
+#include <libcoro/libcoro.h>
+#include <libcoro/loop.h>
+#include <libcoro/raw_setup.h>
 
 #include <string.h>
 #include <stdlib.h>

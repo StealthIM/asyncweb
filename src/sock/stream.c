@@ -1,4 +1,5 @@
-#include "sock/stream.h"
+#include <asyncweb/stream.h>
+#include <asyncweb_internal/tls.h>   /* async_ssl_* / sync_ssl_* 定义 (stream 内部用) */
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>

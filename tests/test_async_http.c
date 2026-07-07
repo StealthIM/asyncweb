@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "libcoro.h"
-#include "asyncweb.h"
+#include <libcoro/libcoro.h>
+#include <asyncweb/asyncweb.h>
 
 task_t* task(async_http_test_task) {
     gen_dec_vars(
