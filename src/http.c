@@ -917,6 +917,193 @@ task_t* anet_async_http_stream(anet_async_http_request_t *req,
     return t;
 }
 
+/* ============================================================
+ * 通用二进制流读取 (raw stream) 实现
+ * ============================================================ */
+
+typedef struct {
+    const char          *method;
+    const char          *host;
+    uint16_t             port;
+    int                  use_tls;
+    const char          *path;
+    const char         **headers;
+    const char          *body;
+    anet_http_chunk_cb_t on_chunk;
+    void                *userdata;
+
+    anet_palsock_t sock;
+    anet_socket_t *async_sock;
+    async_ssl_t   *async_ssl;
+    anet_stream_t *stream;
+    char          *request;
+
+    // header 跳过状态: 累积响应头直到 \r\n\r\n, 之后 body 字节直接透传。
+    char          *hdrbuf;
+    size_t         hdrbuf_len;
+    size_t         hdrbuf_cap;
+    int            header_done;
+} raw_stream_internal_t;
+
+static void raw_emit_bridge(void *item, void *userdata) {
+    raw_stream_internal_t *st = (raw_stream_internal_t*)userdata;
+    if (st->on_chunk) {
+        st->on_chunk((const anet_http_chunk_t*)item, st->userdata);
+    }
+}
+
+// 往 header 缓冲追加一段字节, 保持 NUL 结尾 (供 strstr 找 \r\n\r\n)。失败返回 -1。
+static int raw_hdr_push(raw_stream_internal_t *st, const char *p, size_t n) {
+    if (st->hdrbuf_len + n + 1 > st->hdrbuf_cap) {
+        size_t ncap = st->hdrbuf_cap ? st->hdrbuf_cap * 2 : 1024;
+        while (ncap < st->hdrbuf_len + n + 1) ncap *= 2;
+        char *nb = realloc(st->hdrbuf, ncap);
+        if (!nb) return -1;
+        st->hdrbuf = nb;
+        st->hdrbuf_cap = ncap;
+    }
+    memcpy(st->hdrbuf + st->hdrbuf_len, p, n);
+    st->hdrbuf_len += n;
+    st->hdrbuf[st->hdrbuf_len] = '\0';
+    return 0;
+}
+
+task_t* task_arg(anet_async_http_stream_raw_) {
+    gen_dec_vars(
+        raw_stream_internal_t *st;
+        future_t         *fut;
+        future_t         *resolve_fut;
+        task_t           *task;
+        struct sockaddr_storage addr;
+        int               addr_len;
+        char              buffer[HTTP_BUFFER_SIZE];
+        int               bytes_read;
+        anet_http_chunk_t chunk;   /* 跨 gen_emit 存活 */
+    );
+    gen_begin(ctx);
+
+    {
+        /* 顶层驱动: arg 为 NULL, 从 userdata 取参数 (同 SSE, 见 gen_emit 约束)。 */
+        gen_var(st) = (raw_stream_internal_t*)gen_userdata();
+        gen_var(st)->sock = -1;
+    }
+
+    gen_var(resolve_fut) = anet_palsock_resolve_async(gen_var(st)->host, AF_UNSPEC);
+    if (!gen_var(resolve_fut)) { gen_return(anet_res_status(ANET_ERR)); }
+    gen_yield(gen_var(resolve_fut));
+    {
+        anet_resolve_result_t *r = (anet_resolve_result_t*)future_result(gen_var(resolve_fut));
+        if (!r || r->ok != 0) { free(r); gen_return(anet_res_status(ANET_ERR)); }
+        gen_var(addr) = r->addr;
+        gen_var(addr_len) = r->addr_len;
+        free(r);
+    }
+    if (gen_var(addr).ss_family == AF_INET) {
+        ((struct sockaddr_in*)&gen_var(addr))->sin_port = htons(gen_var(st)->port);
+    } else if (gen_var(addr).ss_family == AF_INET6) {
+        ((struct sockaddr_in6*)&gen_var(addr))->sin6_port = htons(gen_var(st)->port);
+    }
+
+    gen_var(st)->sock = anet_palsock_create(gen_var(addr).ss_family, SOCK_STREAM, 0, 1);
+    if (!anet_palsock_is_valid(gen_var(st)->sock)) { gen_return(anet_res_status(ANET_ERR)); }
+    gen_var(st)->async_sock = anet_socket_create(gen_var(st)->sock);
+    if (!gen_var(st)->async_sock) { gen_return(anet_res_status(ANET_ERR)); }
+    gen_var(fut) = anet_socket_connect(gen_var(st)->async_sock, (struct sockaddr*)&gen_var(addr), gen_var(addr_len));
+    gen_yield(gen_var(fut));
+    if (future_is_rejected(gen_var(fut))) { gen_return(anet_res_status(ANET_ERR)); }
+    if (gen_var(st)->use_tls) {
+        gen_var(st)->async_ssl = async_ssl_create(ASYNC_SSL_CLIENT, gen_var(st)->host);
+        if (!gen_var(st)->async_ssl) { gen_return(anet_res_status(ANET_ERR)); }
+        async_ssl_attach_socket(gen_var(st)->async_ssl, gen_var(st)->async_sock);
+        gen_var(task) = async_ssl_handshake(gen_var(st)->async_ssl);
+        gen_yield_from_task(gen_var(task));
+        if (anet_code_of(future_result(gen_var(task)->future)) != 0) { gen_return(anet_res_status(ANET_ERR)); }
+        gen_var(st)->stream = anet_stream_from_ssl(gen_var(st)->async_ssl);
+    } else {
+        gen_var(st)->stream = anet_stream_from_socket(gen_var(st)->async_sock);
+    }
+    if (!gen_var(st)->stream) { gen_return(anet_res_status(ANET_ERR)); }
+
+    gen_var(st)->request = create_request_string(
+        gen_var(st)->method, gen_var(st)->host, gen_var(st)->port,
+        gen_var(st)->path, gen_var(st)->headers, gen_var(st)->body);
+    if (!gen_var(st)->request) { gen_return(anet_res_status(ANET_ERR)); }
+    gen_var(task) = anet_stream_write_all(gen_var(st)->stream, gen_var(st)->request, strlen(gen_var(st)->request));
+    gen_yield_from_task(gen_var(task));
+    if (anet_code_of(future_result(gen_var(task)->future)) != 0) { gen_return(anet_res_status(ANET_ERR)); }
+    free(gen_var(st)->request);
+    gen_var(st)->request = NULL;
+
+    // 读取: 先攒 header 到 \r\n\r\n, 之后 body 字节整块 emit。
+    while (1) {
+        gen_var(task) = anet_stream_read(gen_var(st)->stream, sizeof(gen_var(buffer)), gen_var(buffer));
+        gen_yield_from_task(gen_var(task));
+        gen_var(bytes_read) = (int)anet_code_of(future_result(gen_var(task)->future));
+        if (gen_var(bytes_read) <= 0) {
+            gen_return(anet_res_status(ANET_OK));   // 流结束
+        }
+
+        if (gen_var(st)->header_done) {
+            gen_var(chunk).data = gen_var(buffer);
+            gen_var(chunk).len  = (size_t)gen_var(bytes_read);
+            gen_emit(&gen_var(chunk));
+        } else {
+            if (raw_hdr_push(gen_var(st), gen_var(buffer), (size_t)gen_var(bytes_read)) != 0) {
+                gen_return(anet_res_status(ANET_ERR));
+            }
+            char *he = strstr(gen_var(st)->hdrbuf, "\r\n\r\n");
+            if (he) {
+                gen_var(st)->header_done = 1;
+                size_t body_off = (size_t)((he + 4) - gen_var(st)->hdrbuf);
+                if (gen_var(st)->hdrbuf_len > body_off) {
+                    gen_var(chunk).data = gen_var(st)->hdrbuf + body_off;
+                    gen_var(chunk).len  = gen_var(st)->hdrbuf_len - body_off;
+                    gen_emit(&gen_var(chunk));
+                }
+            }
+        }
+    }
+
+    gen_cleanup();
+    if (gen_var(st)) {
+        free(gen_var(st)->request);
+        free(gen_var(st)->hdrbuf);
+        free(gen_var(st)->stream);
+        if (gen_var(st)->async_ssl) {
+            async_ssl_destroy(gen_var(st)->async_ssl);
+        } else if (gen_var(st)->async_sock) {
+            anet_socket_close(gen_var(st)->async_sock);
+            free(gen_var(st)->async_sock);
+        } else if (anet_palsock_is_valid(gen_var(st)->sock)) {
+            anet_palsock_close(gen_var(st)->sock);
+        }
+        free(gen_var(st));
+        gen_var(st) = NULL;
+    }
+    gen_end(NULL);
+}
+
+task_t* anet_async_http_stream_raw(anet_async_http_request_t *req,
+                                   anet_http_chunk_cb_t on_chunk, void *userdata) {
+    if (!req) return NULL;
+    raw_stream_internal_t *st = calloc(1, sizeof(*st));
+    if (!st) return NULL;
+    st->method   = req->method;
+    st->host     = req->host;
+    st->port     = req->port;
+    st->use_tls  = req->use_tls;
+    st->path     = req->path;
+    st->headers  = req->headers;
+    st->body     = req->body;
+    st->on_chunk = on_chunk;
+    st->userdata = userdata;
+
+    task_t *t = anet_async_http_stream_raw_(st);
+    if (!t) { free(st); return NULL; }
+    task_set_on_emit(t, raw_emit_bridge, st);
+    return t;
+}
+
 // 简化的异步GET请求
 task_t* task_arg(anet_async_http_get_) {
     gen_dec_vars(

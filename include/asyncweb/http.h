@@ -67,6 +67,24 @@ typedef void (*anet_sse_cb_t)(const anet_sse_event_t *ev, void *userdata);
 task_t* anet_async_http_stream(anet_async_http_request_t *req,
                                anet_sse_cb_t on_event, void *userdata);
 
+/* ---- 通用二进制流读取 ----
+ * 与 SSE 同引擎, 但交付单元是原始字节块 —— 不切行、不认前缀、不解析。库先解析
+ * 并跳过 HTTP 响应头 (状态行 + headers 到 \r\n\r\n), 之后的 body 字节逐块 emit,
+ * 所以回调拿到的是纯 body 字节流 (适合自定义二进制帧协议 / 文件下载)。
+ * 私有帧解析 / 落盘 / 哈希 / Range 由调用方 (如 SDK) 处理 —— asyncweb 不碰 fs。 */
+
+// 一块原始 body 字节 (仅回调内有效, 需留存请自行拷贝)
+typedef struct {
+    const char *data;
+    size_t      len;
+} anet_http_chunk_t;
+
+typedef void (*anet_http_chunk_cb_t)(const anet_http_chunk_t *chunk, void *userdata);
+
+// 发起一个 raw 流式请求。参数同上; body 字节 (跳过 HTTP header 后) 经 on_chunk 交付。
+task_t* anet_async_http_stream_raw(anet_async_http_request_t *req,
+                                   anet_http_chunk_cb_t on_chunk, void *userdata);
+
 // 简化的异步POST请求
 task_t* anet_async_http_post(const char *url, const char *content_type, const char *body, anet_async_http_response_t *response);
 

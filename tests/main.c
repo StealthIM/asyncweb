@@ -17,6 +17,7 @@ int test_server_adversarial();
 int test_server_concurrent();
 int test_client_robustness();
 int test_sse();
+int test_stream_raw();
 
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -69,6 +70,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "sse") == 0) {
         return test_sse();
+    }
+    if (strcmp(argv[1], "stream_raw") == 0) {
+        return test_stream_raw();
     }
 
     printf("Unknown test: %s\n", argv[1]);
